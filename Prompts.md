@@ -30,3 +30,30 @@ Before writing substantial application code:
 Stop after the scaffold and show me what was created, what each folder is responsible for, which dependencies were added and why, the first Week 6 milestone, how to run the project, and what to implement next.
 
 ---
+
+# Week 6 – prompts.md
+
+## Prompt 1 – CV and Job Description Parsing Layer
+
+We are now moving from project scaffolding into the actual Week 6 implementation. The scaffold is already created and tested — do not redesign the architecture or restart the project. The approved proposal remains the source of truth.
+
+Implement ONLY the parsing layer.
+
+Requirements:
+- Implement `parse_jd`, producing the existing `JobDescription` model: role, company if available, requirements, responsibilities, skills/technologies.
+- Implement `parse_cv`, producing the existing `ParsedCV` model: skills, experience, projects, education, achievements.
+- Preserve the candidate's original wording — the Week 7 no-fabrication validator compares generated claims against this evidence. Do not paraphrase or embellish.
+- Do not invent information absent from the source document.
+- Use the existing input handling conventions; do not add a second input system or unnecessary dependencies.
+- Use the existing model abstraction and light-tier routing; do not hard-code a provider in the parsers.
+- Validate every parser result through the existing Pydantic/schema guard, with bounded retry/fallback. No free-form model output may leak into the rest of the app.
+- Register both tools through the existing ToolRegistry; do not create a second registration system.
+- Add focused unit tests for both parsers using the existing fixtures and a deterministic fake model — no live API calls in tests.
+
+Do NOT implement: Research Agent, Scoring Agent, Writing Agent, tailored CV, cover letter, no-fabrication grounding, MCP server, UI changes, multi-model comparison, vector memory.
+
+Then run the full test suite, the parser tests and lint, and report the files changed, how each parser works, how they use the existing architecture, the tests added, the results, any limitations, and the next recommended Week 6 step.
+
+Stop after the parsing layer is complete and verified.
+
+---

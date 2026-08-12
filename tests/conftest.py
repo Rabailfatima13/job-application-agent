@@ -5,6 +5,7 @@ always a stub satisfying the ModelClient protocol.
 """
 
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -54,6 +55,39 @@ def router(settings) -> ModelRouter:
         "light-model": StubModelClient(name="stub-light"),
     }
     return ModelRouter(settings, client_factory=lambda cfg: clients[cfg.model])
+
+
+@pytest.fixture
+def make_router(settings):
+    """Build a router whose light/heavy tiers replay the given canned replies.
+
+    Returned routers keep their stubs reachable via `router.for_step(...)`, so
+    a test can assert on what the model was actually asked.
+    """
+
+    def _make(light_replies=None, heavy_replies=None) -> ModelRouter:
+        clients = {
+            "light-model": StubModelClient(light_replies, name="stub-light"),
+            "heavy-model": StubModelClient(heavy_replies, name="stub-heavy"),
+        }
+        return ModelRouter(settings, client_factory=lambda cfg: clients[cfg.model])
+
+    return _make
+
+
+@pytest.fixture
+def fixtures_dir() -> Path:
+    return Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def sample_cv_text(fixtures_dir) -> str:
+    return (fixtures_dir / "sample_cv.txt").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def sample_jd_text(fixtures_dir) -> str:
+    return (fixtures_dir / "sample_jd.txt").read_text(encoding="utf-8")
 
 
 @pytest.fixture

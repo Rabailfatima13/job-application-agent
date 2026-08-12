@@ -3,7 +3,7 @@
 import pytest
 
 from job_agent.config import HEAVY, LIGHT
-from job_agent.tools import Tool, ToolRegistry
+from job_agent.tools import Tool, ToolRegistry, build_default_registry
 
 
 def _tool(name="web_search"):
@@ -29,6 +29,14 @@ def test_registry_rejects_duplicate_names():
     registry = ToolRegistry([_tool()])
     with pytest.raises(ValueError):
         registry.register(_tool())
+
+
+def test_default_registry_exposes_the_parsing_tools(router):
+    # Agents discover tools here, not by importing tool modules directly.
+    registry = build_default_registry(router)
+    assert set(registry.names()) == {"parse_jd", "parse_cv"}
+    for tool in registry.all():
+        assert tool.input_schema["required"] == ["source"]
 
 
 def test_parsing_routes_to_the_cheap_tier_and_scoring_to_the_heavy_one(router):

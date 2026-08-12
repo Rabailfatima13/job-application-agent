@@ -41,3 +41,27 @@ class ToolRegistry:
 
     def all(self) -> list[Tool]:
         return list(self._tools.values())
+
+
+# Imported after Tool/ToolRegistry exist, since tool modules build on them.
+from .document_io import load_document_text  # noqa: E402
+from .parsing import build_parsing_tools  # noqa: E402
+
+
+def build_default_registry(router, collector=None) -> ToolRegistry:
+    """Every tool the system currently has, ready for an agent.
+
+    This is the single discovery point: agents (and, in Week 7, the MCP server)
+    take a registry built here rather than importing tool modules directly, so
+    a new tool is registered in exactly one place.
+    """
+    return ToolRegistry(build_parsing_tools(router, collector))
+
+
+__all__ = [
+    "Tool",
+    "ToolRegistry",
+    "build_default_registry",
+    "build_parsing_tools",
+    "load_document_text",
+]

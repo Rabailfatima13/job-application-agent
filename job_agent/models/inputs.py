@@ -50,7 +50,13 @@ class RoleRequirement(BaseModel):
 
 
 class JobDescription(BaseModel):
-    """A job posting reduced to role, company, and discrete requirements."""
+    """A job posting reduced to role, company, and discrete requirements.
+
+    `requirements` and `responsibilities` are kept apart on purpose: a
+    requirement is something the candidate is scored against, a responsibility
+    is something the role involves. Only the former feeds the fit score; the
+    latter is context for the Week 7 cover letter.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -58,4 +64,8 @@ class JobDescription(BaseModel):
     company: str
     raw_text: str
     requirements: list[RoleRequirement] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(
+        default_factory=list, description="Technologies/skills named in the posting."
+    )
     location: str | None = None
