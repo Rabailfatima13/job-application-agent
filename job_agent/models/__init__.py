@@ -6,7 +6,14 @@ against guaranteed shapes.
 """
 
 from .inputs import CVEvidence, JobDescription, ParsedCV, RoleRequirement
-from .outputs import CompanyBrief, CoverLetter, FitReport, RequirementMatch, TailoredCV
+from .outputs import (
+    CompanyBrief,
+    CoverLetter,
+    FitReport,
+    RequirementMatch,
+    Source,
+    TailoredCV,
+)
 from .tracker import ApplicationRecord, ApplicationStatus
 
 __all__ = [
@@ -20,5 +27,6 @@ __all__ = [
     "ParsedCV",
     "RequirementMatch",
     "RoleRequirement",
+    "Source",
     "TailoredCV",
 ]

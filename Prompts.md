@@ -107,3 +107,30 @@ Run `python -m pytest -q` and `python -m ruff check .`; keep the suite green wit
 Then STOP. Do not automatically implement the Research Agent or Supervisor.
 
 ---
+
+## Prompt 4 – Research Agent
+
+We are continuing the Week 6 implementation. Parsing, the SQLite tracker and the Scoring Agent are complete (101 tests passing, ruff clean). Do not redesign the architecture.
+
+Implement only the Research Agent and the web-search capability it strictly requires. It should consume the parsed job/company information and produce the existing `CompanyBrief`.
+
+Requirements:
+- Identify the company from the parsed JD, search the web, select useful factual findings, summarise them into `CompanyBrief`, and preserve source information.
+- Keep the research role-relevant — what the company does, its products, its technology/domain, recent relevant information — not a general encyclopedia.
+- Follow the same `BaseAgent` pattern as `ScoringAgent`; reuse the existing models, tools, llm, observability and configuration. No second model client or tool registry.
+- Implement web search per the proposal (SerpAPI or Brave), configurable through environment/configuration. Never hard-code an API key.
+- Separate search from summarisation: the tool returns structured results, the model summarises them. The search tool must not generate an LLM summary.
+- Keep search results small and bounded (title, URL, snippet) to control latency and cost.
+- Handle the existing `Unknown` company sentinel explicitly — do not search for "Unknown company" and do not guess the employer.
+- Use the existing ModelRouter and tier design; use the existing validation/retry infrastructure; the final brief must be Pydantic validated.
+- Add a lightweight deterministic grounding check: the summary must be grounded in the retrieved results. Do not build the Week 7 no-fabrication system here. Document the limitation.
+- Caching: only if it fits naturally; otherwise document and defer.
+- Tests must not call a real search API or need a key/network.
+
+Do NOT implement: Supervisor, LangGraph workflow, Writing Agent, tailoring, cover letter, MCP server, UI, multi-model comparison, vector memory, full document validator.
+
+Run `python -m pytest -q` and `python -m ruff check .`; keep the suite green without weakening existing tests. Then report files changed, the search provider chosen and why, how `web_search` works, how the ResearchAgent works, how results reach summarisation, how grounding is handled, tests added, results, configuration requirements, limitations, and the next Week 6 step.
+
+Then STOP. Do not connect parse → research → score → track through the Supervisor yet.
+
+---

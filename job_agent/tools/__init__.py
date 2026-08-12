@@ -46,22 +46,40 @@ class ToolRegistry:
 # Imported after Tool/ToolRegistry exist, since tool modules build on them.
 from .document_io import load_document_text  # noqa: E402
 from .parsing import build_parsing_tools  # noqa: E402
+from .web_search import (  # noqa: E402
+    SearchError,
+    SearchResult,
+    WebSearchClient,
+    build_web_search_tool,
+)
 
 
-def build_default_registry(router, collector=None) -> ToolRegistry:
+def build_default_registry(
+    router, collector=None, search_client: WebSearchClient | None = None
+) -> ToolRegistry:
     """Every tool the system currently has, ready for an agent.
 
     This is the single discovery point: agents (and, in Week 7, the MCP server)
     take a registry built here rather than importing tool modules directly, so
     a new tool is registered in exactly one place.
+
+    `web_search` appears only when a search client is supplied, so a run
+    without search credentials still gets a working parsing registry.
     """
-    return ToolRegistry(build_parsing_tools(router, collector))
+    tools = build_parsing_tools(router, collector)
+    if search_client is not None:
+        tools.append(build_web_search_tool(search_client))
+    return ToolRegistry(tools)
 
 
 __all__ = [
+    "SearchError",
+    "SearchResult",
     "Tool",
     "ToolRegistry",
+    "WebSearchClient",
     "build_default_registry",
     "build_parsing_tools",
+    "build_web_search_tool",
     "load_document_text",
 ]

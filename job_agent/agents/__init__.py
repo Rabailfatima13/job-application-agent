@@ -6,7 +6,7 @@ jobs, and no worker reaches outside its own.
 
   supervisor.py  Week 6 - parses inputs, runs the graph, assembles the result,
                  writes the tracker record. Owns routing, not reasoning.
-  research.py    Week 6 - web-searches the company, returns a sourced brief.
+  research.py    done - web-searches the company, returns a sourced brief.
   scoring.py     done - requirements vs. CV evidence -> FitReport.
   writing.py     Week 7 - re-emphasised CV + cover letter, grounded only.
 
@@ -14,6 +14,7 @@ All three workers inherit BaseAgent for their traced model/tool calls.
 """
 
 from .base import BaseAgent
+from .research import ResearchAgent
 from .scoring import ScoringAgent, compute_fit_score
 
-__all__ = ["BaseAgent", "ScoringAgent", "compute_fit_score"]
+__all__ = ["BaseAgent", "ResearchAgent", "ScoringAgent", "compute_fit_score"]

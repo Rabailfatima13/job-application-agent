@@ -3,7 +3,12 @@
 import pytest
 
 from job_agent.config import HEAVY, LIGHT
-from job_agent.tools import Tool, ToolRegistry, build_default_registry
+from job_agent.tools import (
+    Tool,
+    ToolRegistry,
+    WebSearchClient,
+    build_default_registry,
+)
 
 
 def _tool(name="web_search"):
@@ -37,6 +42,13 @@ def test_default_registry_exposes_the_parsing_tools(router):
     assert set(registry.names()) == {"parse_jd", "parse_cv"}
     for tool in registry.all():
         assert tool.input_schema["required"] == ["source"]
+
+
+def test_the_registry_gains_web_search_when_a_search_client_is_supplied(router):
+    client = WebSearchClient("serpapi", api_key="k", request_fn=lambda *_: {})
+    registry = build_default_registry(router, search_client=client)
+
+    assert set(registry.names()) == {"parse_jd", "parse_cv", "web_search"}
 
 
 def test_parsing_routes_to_the_cheap_tier_and_scoring_to_the_heavy_one(router):
