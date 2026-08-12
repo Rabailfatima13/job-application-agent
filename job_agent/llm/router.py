@@ -21,6 +21,9 @@ STEP_TIERS: dict[str, str] = {
     "score_fit": HEAVY,
     "tailor_cv": HEAVY,
     "draft_cover_letter": HEAVY,
+    # Fact-checking generated claims against the CV is a judgement call, not a
+    # mechanical one, so it stays on the strong model (FR-10).
+    "verify_claims": HEAVY,
 }
 
 

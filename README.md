@@ -8,9 +8,10 @@ application in a persistent store.
 Arbisoft AI Internship 2026 — Phase 3 (Weeks 5.5–8). Built to the approved project
 specification, which is the source of truth for scope and requirements.
 
-> **Status: Week 6 complete.** The core pipeline runs end to end — parse, research,
-> score, track, persist. The writing agent, the no-fabrication grounding system, the
-> MCP server and the user-facing UI are Week 7 work and are **not** implemented yet.
+> **Status: Week 6 complete · Week 7 in progress.** The Week 6 pipeline runs end to end
+> — parse, research, score, track, persist. Week 7 has added the no-fabrication
+> grounding system and the writing agent (tailored CV + cover letter). The MCP server,
+> multi-model comparison and the user-facing UI are **not** implemented yet.
 
 ## The Week 6 pipeline
 
@@ -30,6 +31,9 @@ CV + Job Description
     score_fit          ─ evidence-backed FitReport, score computed in code
         |
         v
+ write_application     ─ Week 7: tailored CV + cover letter, schema-validated
+        |                AND grounded in the real CV, or not returned at all
+        v
  track_application     ─ ApplicationRecord written to SQLite, always as `draft`
         |
         v
@@ -47,7 +51,7 @@ The eventual writing agent may **re-order, re-emphasise, and re-word** the candi
 real content. It may **never** invent a job, project, skill, achievement, technology, or
 number of years.
 
-Week 6 enforces this where it already applies, deterministically and without an LLM:
+This is enforced at every stage, deterministically and without an LLM:
 
 - **CV parsing** drops any evidence line the model did not copy from the source CV.
 - **Scoring** lets the model return only an *index* into that evidence — it cannot write
@@ -55,8 +59,14 @@ Week 6 enforces this where it already applies, deterministically and without an 
   unmet.
 - **Research** drops any fact citing no real search result, or carrying a number absent
   from the result it cites.
+- **Writing (Week 7)** validates every generated bullet and every cover-letter sentence
+  against the CV. A line may be reworded, reordered or combined from two real bullets —
+  but a technology, employer, qualification, metric or duration the CV never stated is
+  rejected, the model is told exactly what was unsupported, and it rewrites. If it
+  cannot, no documents are returned at all and the original CV plus the gap list stand.
 
-The full claim-level grounding check on *generated* documents is Week 7.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (D8–D10) for why grounding is a
+separate layer from schema validation.
 
 ## Layout
 
@@ -162,15 +172,16 @@ python -m pytest --cov=job_agent --cov-report=term-missing
 - Tracing of every tool and model call with latency and token counts
 - 156 tests, ruff clean, ~91% coverage
 
-**Deferred to Week 7**
+**In progress — Week 7**
 
-- Writing agent — CV tailoring and cover letter drafting
-- The full no-fabrication grounding system for generated documents
-- Custom MCP server
-- Multi-model routing comparison
-- Additional LangGraph branches (fit threshold, validation retry, next-role loop)
-- Streamlit UI and a user-facing runner
-- Research caching and cost/latency tuning
+- ✅ No-fabrication grounding system (`validation/grounding.py`)
+- ✅ Writing agent — tailored CV and cover letter, grounded or not returned
+- ✅ Supervisor integration: optional `write_application` stage
+- ⬜ Custom MCP server
+- ⬜ Multi-model routing comparison
+- ⬜ Additional LangGraph branches (fit threshold, next-role loop)
+- ⬜ Streamlit UI and a user-facing runner
+- ⬜ Research caching and cost/latency tuning
 
 **Week 8** — feature freeze, two-role end-to-end run, cost/latency numbers, final
 documentation and demo.

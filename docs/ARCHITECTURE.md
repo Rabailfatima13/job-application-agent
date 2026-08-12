@@ -117,6 +117,75 @@ auto-submitted.
 tracker. It never constructs a database. `build_supervisor(settings)` is the single
 place that knows production means SQLite plus a real search client.
 
+## Week 7 (in progress): grounding and the writing agent
+
+The pipeline gains one optional stage, between scoring and tracking:
+
+```
+... → score_fit → write_application → track_application → END
+```
+
+`write_application` appears only when a `WritingAgent` is injected. Without one the
+graph is the Week 6 pipeline exactly — which is also what the fit-threshold branch will
+want when a role is not worth applying to.
+
+**Grounding is not a graph node.** It validates the writer's *output*, so it lives
+inside the writer's validate-and-retry loop, which is where the proposal's activity
+diagram puts it:
+
+```
+prompt → heavy model → WritingDraft → schema validation ──(malformed)──→ retry
+                                            ↓
+                                   grounding validation ──(unsupported)─→ retry,
+                                            ↓                             quoting the
+                                    TailoredCV + CoverLetter              violations
+                                            ↓
+                          out of attempts → RetryExhaustedError
+```
+
+### D8 — Grounding is a separate layer from schema validation
+
+A perfectly schema-valid tailored CV can still be a fabrication. Schema validation
+answers *"is this the right shape?"*; grounding answers *"is this true of **this**
+candidate?"* Neither can substitute for the other, so both must pass and they live in
+separate modules (`validation/schema_guard.py`, `validation/grounding.py`).
+
+### D9 — Grounding is deterministic first, model-assisted only if asked
+
+Stage 1 (`check_grounding`) makes no model call. A generated line is rejected when it
+contains:
+
+- a **distinctive term** — capitalised mid-sentence, an acronym, or carrying a digit or
+  `+`/`#` — that the CV never mentions (invented technology, employer, product,
+  institution, certification), or
+- a **number** the CV never stated, with spelled-out numbers normalised so "five years"
+  is checked exactly as "5 years" (invented durations, team sizes, percentage
+  improvements).
+
+This is not substring matching: a line may be reworded, reordered, or combine two real
+bullets and still pass, because only the *facts* it introduces are checked.
+
+The authoritative evidence is the CV alone — `raw_text`, the parsed evidence lines, and
+the candidate's listed skills. A job posting mentioning Kubernetes never makes
+"experience with Kubernetes" supportable. The one narrow allowance is `context_terms`,
+the employer's own proper nouns, so a cover letter can name the company it is addressed
+to; it is never used for technologies or achievements.
+
+Stage 2 (`build_entailment_prompt` + `apply_verdicts`) is an optional model pass over
+the claims stage 1 accepted, for fabrications with no fingerprint ("led the migration").
+It is **off by default** — an extra heavy call per attempt — and it can only *demote* a
+claim, never rehabilitate one stage 1 rejected. The call is made by the writing agent
+through the existing router, so no provider is named in the validation layer and the
+call is traced like any other.
+
+### D10 — A failed rewrite costs the documents, not the run
+
+If the writer cannot produce grounded material within its attempt budget it raises
+`RetryExhaustedError` rather than returning something unverifiable. The supervisor
+catches that, records a warning, and lets the run finish: the fit report and the tracked
+application survive, and the user keeps their original CV plus the gap list — the
+proposal's stated fallback.
+
 ## What the scaffold deliberately does not include
 
 Parsing, research, scoring, writing, SQLite persistence, the MCP server, and the real UI.

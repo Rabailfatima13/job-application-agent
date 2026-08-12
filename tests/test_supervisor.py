@@ -12,10 +12,18 @@ from itertools import count
 
 import pytest
 
-from job_agent.agents import ResearchAgent, ScoringAgent, Supervisor, build_supervisor
+from job_agent.agents import (
+    ResearchAgent,
+    ScoringAgent,
+    Supervisor,
+    WritingAgent,
+    build_supervisor,
+)
 from job_agent.agents.supervisor import (
     PIPELINE_NODES,
+    PIPELINE_NODES_WITH_WRITING,
     RESEARCH_FAILED_WARNING,
+    WRITING_FAILED_WARNING,
     new_application_id,
 )
 from job_agent.memory import InMemoryApplicationTracker, SQLiteApplicationTracker
@@ -128,6 +136,7 @@ def pipeline(make_router):
         scoring_reply=None,
         search_error=None,
         collector=None,
+        writing_replies=None,
     ):
         collector = collector or TraceCollector()
         router = make_router(
@@ -137,8 +146,11 @@ def pipeline(make_router):
                 json.dumps(jd_extraction or JD_EXTRACTION),
                 research_reply or json.dumps(RESEARCH_EXTRACTION),
             ],
-            # ...and scoring runs heavy.
-            heavy_replies=[scoring_reply or json.dumps(SCORING_JUDGEMENT)],
+            # ...and scoring runs heavy, followed by writing when enabled.
+            heavy_replies=[
+                scoring_reply or json.dumps(SCORING_JUDGEMENT),
+                *(writing_replies or []),
+            ],
         )
         registry = ToolRegistry(
             [
@@ -150,6 +162,10 @@ def pipeline(make_router):
             tools=registry,
             research=ResearchAgent(router, tools=registry, collector=collector),
             scoring=ScoringAgent(router, collector=collector),
+            # Week 6 runs without a writer; passing replies opts into Week 7.
+            writing=(
+                WritingAgent(router, collector=collector) if writing_replies else None
+            ),
             tracker=tracker if tracker is not None else InMemoryApplicationTracker(),
             collector=collector,
             id_factory=lambda: f"app-{next(ids)}",
@@ -457,6 +473,116 @@ def test_the_supervisor_never_opens_a_database_of_its_own(
     assert not list(tmp_path.glob("*.db"))
 
 
+# --- Week 7: the writing stage -----------------------------------------------
+
+WRITING_DRAFT = {
+    "bullets": [
+        "Built a Task Management REST API with FastAPI, SQLAlchemy and SQLite.",
+        "Built a research agent with tool calling, session memory and hooks.",
+    ],
+    "omitted": [],
+    "cover_letter": (
+        "I am applying for the Junior AI Engineer role at Arbisoft. "
+        "I built a Task Management REST API with FastAPI and SQLite."
+    ),
+}
+
+FABRICATED_DRAFT = {
+    **WRITING_DRAFT,
+    "bullets": ["Deployed the platform to Kubernetes over 5 years in production."],
+}
+
+
+def test_the_writing_stage_produces_tailored_documents(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    tracker = InMemoryApplicationTracker()
+    supervisor = pipeline(tracker=tracker, writing_replies=[json.dumps(WRITING_DRAFT)])
+
+    context = supervisor.run(sample_cv_text, sample_jd_text)
+
+    assert context.tailored_cv is not None and context.cover_letter is not None
+    assert len(context.tailored_cv.bullets) == 2
+    assert context.tailored_cv.company == "Arbisoft"
+    assert "Arbisoft" in context.cover_letter.body
+    assert context.warnings == []
+    # ...and Week 6's behaviour is untouched.
+    assert context.fit_report.overall_fit == EXPECTED_FIT
+    assert tracker.get(context.application.application_id) is not None
+
+
+def test_writing_runs_between_scoring_and_tracking(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    collector = TraceCollector()
+
+    pipeline(
+        collector=collector, writing_replies=[json.dumps(WRITING_DRAFT)]
+    ).run(sample_cv_text, sample_jd_text)
+
+    stages = [e.name for e in collector.events if e.name in PIPELINE_NODES_WITH_WRITING]
+    assert stages == list(PIPELINE_NODES_WITH_WRITING)
+
+
+def test_the_writing_stage_is_absent_when_no_writer_is_injected(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    supervisor = pipeline()
+
+    context = supervisor.run(sample_cv_text, sample_jd_text)
+
+    assert "write_application" not in supervisor.graph.get_graph().nodes
+    assert context.tailored_cv is None and context.cover_letter is None
+    assert context.application is not None  # the Week 6 pipeline still completes
+
+
+def test_unfixable_fabrication_costs_the_documents_not_the_application(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    tracker = InMemoryApplicationTracker()
+    supervisor = pipeline(
+        tracker=tracker, writing_replies=[json.dumps(FABRICATED_DRAFT)] * 3
+    )
+
+    context = supervisor.run(sample_cv_text, sample_jd_text)
+
+    # No rewrite nobody can vouch for...
+    assert context.tailored_cv is None and context.cover_letter is None
+    assert WRITING_FAILED_WARNING in context.warnings
+    # ...but the fit report and the tracked application survive.
+    assert context.fit_report is not None
+    assert tracker.get(context.application.application_id) is not None
+    assert context.application.status is ApplicationStatus.draft
+
+
+def test_a_fabricated_first_draft_is_retried_inside_the_stage(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    supervisor = pipeline(
+        writing_replies=[json.dumps(FABRICATED_DRAFT), json.dumps(WRITING_DRAFT)]
+    )
+
+    context = supervisor.run(sample_cv_text, sample_jd_text)
+
+    assert context.tailored_cv is not None
+    assert not any("Kubernetes" in b for b in context.tailored_cv.bullets)
+    assert context.warnings == []
+
+
+def test_tailored_documents_are_never_submitted_automatically(
+    pipeline, sample_cv_text, sample_jd_text
+):
+    tracker = InMemoryApplicationTracker()
+
+    pipeline(tracker=tracker, writing_replies=[json.dumps(WRITING_DRAFT)]).run(
+        sample_cv_text, sample_jd_text
+    )
+
+    (record,) = tracker.list()
+    assert record.status is ApplicationStatus.draft
+    assert tracker.list(status=ApplicationStatus.submitted) == []
+
+
 def test_the_production_factory_wires_sqlite_and_web_search(settings):
     # build_supervisor is the only place that knows those choices; it needs no
     # network or API call to construct them.
@@ -466,3 +592,4 @@ def test_the_production_factory_wires_sqlite_and_web_search(settings):
     assert supervisor.tracker.db_path == settings.tracker_db_path
     assert set(supervisor.tools.names()) == {"parse_cv", "parse_jd", "web_search"}
     assert supervisor.collector is not None
+    assert isinstance(supervisor.writing, WritingAgent)

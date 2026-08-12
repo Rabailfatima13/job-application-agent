@@ -34,18 +34,27 @@ from ..tools import ToolRegistry, WebSearchClient, build_default_registry
 from ..validation import RetryExhaustedError
 from .research import ResearchAgent
 from .scoring import ScoringAgent
+from .writing import WritingAgent
 
 PARSE_CV = "parse_cv"
 PARSE_JD = "parse_jd"
 RESEARCH = "research"
 SCORE = "score_fit"
+WRITE = "write_application"
 TRACK = "track_application"
 
+#: The Week 6 core, always present.
 PIPELINE_NODES = (PARSE_CV, PARSE_JD, RESEARCH, SCORE, TRACK)
+#: With a writing agent injected, `write_application` runs between them.
+PIPELINE_NODES_WITH_WRITING = (PARSE_CV, PARSE_JD, RESEARCH, SCORE, WRITE, TRACK)
 
 RESEARCH_FAILED_WARNING = (
     "Company research could not be completed, so the fit report was produced "
     "without a company brief."
+)
+WRITING_FAILED_WARNING = (
+    "Tailored documents could not be produced without unsupported claims, so "
+    "none were written. The original CV and the gap list stand."
 )
 
 
@@ -78,11 +87,16 @@ class Supervisor:
         collector: TraceCollector | None = None,
         id_factory: Callable[[], str] = new_application_id,
         clock: Callable[[], datetime] = datetime.now,
+        writing: WritingAgent | None = None,
     ) -> None:
         self.tools = tools
         self.research = research
         self.scoring = scoring
         self.tracker = tracker
+        # Optional: without a writing agent the graph is the Week 6 pipeline
+        # exactly, which is also what a run below the fit threshold will want
+        # once that branch lands.
+        self.writing = writing
         self.collector = collector
         self._id_factory = id_factory
         self._clock = clock
@@ -92,7 +106,15 @@ class Supervisor:
 
     def _build_graph(self):
         """START -> parse_cv -> parse_jd -> research -> score_fit ->
-        track_application -> END."""
+        [write_application] -> track_application -> END.
+
+        Writing sits after scoring because it consumes the fit report's
+        recommended emphasis and gaps, and before tracking so the record is
+        still written last. Grounding is not a node of its own: it validates
+        the writer's output, so it belongs inside the writer's own
+        validate-and-retry loop, exactly as the proposal's activity diagram
+        shows it.
+        """
         builder = StateGraph(RunContext)
         builder.add_node(PARSE_CV, self._parse_cv)
         builder.add_node(PARSE_JD, self._parse_jd)
@@ -104,7 +126,12 @@ class Supervisor:
         builder.add_edge(PARSE_CV, PARSE_JD)
         builder.add_edge(PARSE_JD, RESEARCH)
         builder.add_edge(RESEARCH, SCORE)
-        builder.add_edge(SCORE, TRACK)
+        if self.writing is not None:
+            builder.add_node(WRITE, self._write)
+            builder.add_edge(SCORE, WRITE)
+            builder.add_edge(WRITE, TRACK)
+        else:
+            builder.add_edge(SCORE, TRACK)
         builder.add_edge(TRACK, END)
         return builder.compile()
 
@@ -174,6 +201,27 @@ class Supervisor:
             outcome["result"] = f"overall_fit={report.overall_fit}"
         return {"fit_report": report}
 
+    def _write(self, state: RunContext) -> dict:
+        """Tailor the CV and draft the cover letter, if it can be done honestly.
+
+        The writer refuses to return material carrying unsupported claims. When
+        that happens the run still completes: the application is tracked, and
+        the user keeps their original CV plus the gap list - the proposal's
+        stated fallback - rather than receiving a rewrite nobody can vouch for.
+        """
+        with self._traced(WRITE) as outcome:
+            try:
+                tailored, letter = self.writing.run(state)
+            except RetryExhaustedError as exc:
+                outcome["result"] = f"skipped: {exc}"
+                return {"warnings": [*state.warnings, WRITING_FAILED_WARNING]}
+            outcome["result"] = f"{len(tailored.bullets)} bullet(s) + cover letter"
+        return {
+            "tailored_cv": tailored,
+            "cover_letter": letter,
+            "warnings": list(state.warnings),
+        }
+
     def _track(self, state: RunContext) -> dict:
         """Persist the application through the injected tracker.
 
@@ -217,6 +265,7 @@ def build_supervisor(
         tools=registry,
         research=ResearchAgent(router, tools=registry, collector=collector),
         scoring=ScoringAgent(router, collector=collector),
+        writing=WritingAgent(router, collector=collector),
         tracker=tracker,
         collector=collector,
     )

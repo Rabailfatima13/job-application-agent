@@ -164,3 +164,25 @@ Run `python -m pytest -q` and `python -m ruff check .`, plus coverage if availab
 Then STOP. Do not begin Week 7 automatically.
 
 ---
+
+# Week 7 – prompts.md
+
+## Prompt 1 – No-Fabrication Grounding and the Writing Agent
+
+We are starting Week 7. Week 6 is complete and pushed to GitHub. Do not rewrite or unnecessarily refactor the Week 6 architecture, do not break any existing tests, and run the full suite first to record a baseline.
+
+In this task implement ONLY: (A) the no-fabrication grounding system, (B) the writing agent, and (C) the minimum supervisor integration needed to test them. No MCP, no Streamlit UI.
+
+**A — Grounding.** Implement the existing `job_agent/validation/grounding.py` stub. The writing agent must never invent information about the candidate. Generated claims must be supported by the parsed CV evidence / raw CV. Grounding must stay an independent layer from schema validation, because a schema-valid document can still be fabricated. It must detect invented jobs, projects, technologies, achievements, years of experience, education, certifications and numerical claims — but must NOT work by checking whether the generated sentence is an exact substring of the CV. Reordering, rewording, combining supported evidence and re-emphasis are all allowed. Return a structured result (passed / violations / checked claims). Prefer deterministic checks; if an LLM-assisted step is needed, isolate it behind the existing ModelClient abstraction, traced and testable, with no Anthropic SDK calls inside the grounding module.
+
+**B — Writing agent** in `job_agent/agents/writing.py`, consuming `ParsedCV`, `JobDescription`, `CompanyBrief` and `FitReport` and producing a tailored CV and a cover letter as validated Pydantic output. The flow is: build prompt → heavy model → structured output → schema validation → grounding validation → accept or retry. A failed grounding check must not be silently accepted: retry explaining the violations, and if fabrication persists raise the project's existing retry exception rather than returning unsafe output.
+
+**C — Supervisor.** Only after A and B are independently tested, make the minimum change so the writing stage can consume the Week 6 outputs. Keep application tracking intact and never auto-submit.
+
+Tests must be offline with stub models and must cover: a grounded CV and cover letter passing; invented technology, years of experience, metric, project and certification each rejected; reworded and reordered evidence allowed; schema retry; schema-valid-but-ungrounded output rejected and retried; persistent grounding failure raising; writing model calls traced; grounding failures traced; and all existing Week 6 tests still passing unchanged.
+
+Update `docs/ARCHITECTURE.md`, `Prompts.md` and the README where necessary, marking Week 6 complete and Week 7 in progress, and documenting why grounding is separate from schema validation. Run pytest, ruff and coverage. Do not push or open a PR. Do not commit `.env`, keys, databases, logs or personal documents.
+
+Then STOP — no MCP, Streamlit, or multi-model comparison work.
+
+---

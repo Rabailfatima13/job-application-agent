@@ -9,6 +9,7 @@ jobs, and no worker reaches outside its own.
   research.py    done - web-searches the company, returns a sourced brief.
   scoring.py     done - requirements vs. CV evidence -> FitReport.
   writing.py     Week 7 - re-emphasised CV + cover letter, grounded only.
+                 Schema-valid AND grounded, or it is not returned at all.
 
 All three workers inherit BaseAgent for their traced model/tool calls.
 """
@@ -17,12 +18,14 @@ from .base import BaseAgent
 from .research import ResearchAgent
 from .scoring import ScoringAgent, compute_fit_score
 from .supervisor import Supervisor, build_supervisor
+from .writing import WritingAgent
 
 __all__ = [
     "BaseAgent",
     "ResearchAgent",
     "ScoringAgent",
     "Supervisor",
+    "WritingAgent",
     "build_supervisor",
     "compute_fit_score",
 ]
