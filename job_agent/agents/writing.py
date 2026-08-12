@@ -91,6 +91,10 @@ cover_letter: 3-4 short paragraphs addressed to the company, drawing only on \
 the evidence, plus the company facts supplied. Do not claim knowledge of the \
 company beyond those facts.
 
+Never write a template placeholder such as [Candidate], [Your Name], [Date] or \
+[Hiring Manager]. Sign off with the candidate's name exactly as it is given, \
+and if no name is given, end the letter without a signature line.
+
 Reply with a single JSON object and nothing else:
 {"bullets": [str], "omitted": [str], "cover_letter": str}"""
 
@@ -299,6 +303,7 @@ def build_writing_prompt(
         else "- (no company research available)"
     )
     return (
+        f"CANDIDATE NAME: {cv.candidate_name or '(not given - do not invent one)'}\n"
         f"ROLE: {job.role}\n"
         f"COMPANY: {job.company}\n\n"
         f"WHAT THE ROLE ASKS FOR:\n{requirements}\n\n"

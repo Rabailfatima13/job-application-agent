@@ -11,7 +11,7 @@ import json
 import pytest
 
 from job_agent.agents import WritingAgent
-from job_agent.agents.writing import build_writing_prompt
+from job_agent.agents.writing import WRITING_SYSTEM_PROMPT, build_writing_prompt
 from job_agent.memory.session import RunContext
 from job_agent.models import (
     CompanyBrief,
@@ -179,6 +179,59 @@ def test_the_prompt_supplies_evidence_emphasis_gaps_and_company_facts(
     assert "WORTH FOREGROUNDING" in prompt
     assert "KNOWN GAPS" in prompt and "Kubernetes experience" in prompt
     assert "Builds data platforms." in prompt
+
+
+def test_the_prompt_names_the_candidate_so_the_letter_can_be_signed(cv, job, report):
+    # The live rehearsal produced "Sincerely, [Candidate]", which grounding
+    # then rejected. The fix is upstream: give the model the real name and
+    # forbid placeholders, rather than teaching grounding to accept them.
+    prompt = build_writing_prompt(cv, job, report)
+
+    assert "CANDIDATE NAME: Mahnoor Rauf" in prompt
+    assert "[Candidate]" in WRITING_SYSTEM_PROMPT  # named as forbidden
+    assert "Never write a template placeholder" in WRITING_SYSTEM_PROMPT
+
+
+def test_the_prompt_refuses_to_invent_a_name_when_the_cv_has_none(job, report):
+    anonymous = ParsedCV(raw_text="Built a FastAPI service.", evidence=[])
+
+    prompt = build_writing_prompt(anonymous, job, report)
+
+    assert "do not invent one" in prompt
+
+
+def test_a_letter_signed_with_the_real_name_survives_grounding(
+    make_router, cv, job, report
+):
+    signed = {
+        **GOOD_DRAFT,
+        "cover_letter": (
+            "I built a research agent with tool calling and session memory. "
+            "Sincerely, Mahnoor Rauf"
+        ),
+    }
+    agent = agent_for(make_router, [json.dumps(signed)])
+
+    _, letter = agent.write(cv, job, report)
+
+    assert "Mahnoor Rauf" in letter.body
+
+
+def test_a_plural_reference_to_real_cv_content_survives_grounding(
+    make_router, cv, job, report
+):
+    # The exact draft the live rehearsal threw away three times.
+    plural = {
+        **GOOD_DRAFT,
+        "bullets": ["Built REST APIs with FastAPI, SQLAlchemy and SQLite."],
+        "cover_letter": "I have experience building REST APIs with FastAPI.",
+    }
+    agent = agent_for(make_router, [json.dumps(plural)])
+
+    tailored, letter = agent.write(cv, job, report)
+
+    assert tailored.bullets == ["Built REST APIs with FastAPI, SQLAlchemy and SQLite."]
+    assert "REST APIs" in letter.body
 
 
 def test_the_prompt_is_honest_when_there_is_no_company_research(cv, job, report):

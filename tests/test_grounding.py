@@ -19,6 +19,7 @@ from job_agent.validation.grounding import (
     build_entailment_prompt,
     distinctive_terms,
     numbers_in,
+    singular,
 )
 
 EVIDENCE = [
@@ -230,6 +231,88 @@ def test_numbers_normalise_spelled_out_words():
 
 def test_an_empty_claim_list_is_trivially_clean(cv):
     assert check_grounding([], cv).passed
+
+
+# --- Regression: plural/singular variation (found in the live rehearsal) -----
+
+
+def test_a_plural_of_a_real_cv_term_is_supported(cv):
+    # The live run rejected exactly this: the CV says "REST API", the writer
+    # wrote "REST APIs", and a perfectly grounded bullet was thrown away.
+    result = check(
+        "I have experience building REST APIs with FastAPI and testing with pytest.",
+        cv,
+    )
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Delivered REST APIs backed by SQLite.",
+        "Built Task Management APIs with FastAPI.",
+        "Secured Task Manager APIs with JWTs.",
+    ],
+)
+def test_regular_plurals_of_supported_terms_pass(cv, claim):
+    assert check(claim, cv).passed
+
+
+def test_singular_of_a_plural_cv_term_is_supported():
+    cv = ParsedCV(
+        raw_text="Maintained data pipelines and Kubernetes clusters.",
+        evidence=[CVEvidence(text="Maintained data pipelines and Kubernetes clusters.")],
+    )
+
+    assert check("Maintained a Kubernetes cluster.", cv).passed
+
+
+def test_plural_normalisation_does_not_rescue_an_invented_term(cv):
+    # The whole risk of loosening the match: it must not let fabrication in.
+    for claim in (
+        "Managed Kubernetes clusters in production.",
+        "Ran workloads on AWS.",
+        "Holds Azure certifications.",
+        "Studied at Stanford.",
+    ):
+        assert not check(claim, cv).passed, claim
+
+
+def test_words_that_merely_end_in_s_are_not_stripped(cv):
+    # "Kafkas" is not the plural of anything in this CV; "Access" and "Status"
+    # must not be mangled into "acces"/"statu" and accidentally matched.
+    assert not check("Streamed events through Kafkas.", cv).passed
+    assert not check("Administered MS Access databases.", cv).passed
+
+
+def test_the_singular_helper_only_undoes_regular_plurals():
+    assert singular("APIs") == "api"
+    assert singular("clusters") == "cluster"
+    assert singular("models") == "model"
+    assert singular("projects") == "project"
+    assert singular("libraries") == "library"
+    assert singular("batches") == "batch"
+    # Left alone: too short, not a plural, or a false plural.
+    assert singular("AWS") == "aws"
+    assert singular("access") == "access"
+    assert singular("status") == "status"
+    assert singular("Python") == "python"
+
+
+def test_matching_is_still_substring_based_for_compound_terms(cv):
+    # "SQL" inside "SQLAlchemy" was supported before this change and still is.
+    assert check("Wrote SQL against the task database.", cv).passed
+
+
+def test_the_candidates_own_name_is_grounded(cv):
+    # So a cover letter can be signed without tripping the guard.
+    assert check("Sincerely, Mahnoor Rauf", cv).passed
+
+
+def test_a_template_placeholder_is_still_flagged(cv):
+    # The prompt is what stops these being written; grounding stays strict.
+    assert not check("Sincerely, [Candidate]", cv).passed
 
 
 # --- Model-assisted second stage --------------------------------------------

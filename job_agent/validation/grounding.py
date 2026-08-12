@@ -118,6 +118,39 @@ def numbers_in(text: str) -> set[str]:
     return set(_DIGITS.findall(_normalise(text)))
 
 
+def singular(term: str) -> str:
+    """A conservative singular form of `term`, for plural-only differences.
+
+    Exists because "REST APIs" is the same claim as "REST API" - a live run
+    had a perfectly grounded bullet rejected over exactly that `s`. The rules
+    are deliberately shallow: they undo regular English pluralisation and
+    nothing else. No stemming, no lemmatisation, no synonyms - a term that
+    differs from the CV by more than a plural ending stays unsupported.
+    """
+    lowered = term.lower()
+    if len(lowered) <= 3 or not lowered.endswith("s"):
+        return lowered
+    if lowered.endswith("ss") or lowered.endswith("us"):
+        return lowered  # "access", "status" are not plurals
+    if lowered.endswith("ies"):
+        return lowered[:-3] + "y"  # libraries -> library
+    if lowered.endswith("es") and lowered[:-2].endswith(("s", "x", "z", "ch", "sh")):
+        return lowered[:-2]  # boxes -> box, batches -> batch
+    return lowered[:-1]  # APIs -> api, clusters -> cluster
+
+
+def is_term_supported(term: str, corpus_lower: str) -> bool:
+    """Whether `term` appears in the CV, allowing a plural/singular difference.
+
+    Matching stays substring-based, as it always was, so a term is still found
+    inside a longer word ("SQL" within "SQLAlchemy"). The singular form is only
+    an *additional* way to match, never a replacement - this widens what counts
+    as supported by exactly one thing: the plural `s`.
+    """
+    lowered = term.lower()
+    return lowered in corpus_lower or singular(term) in corpus_lower
+
+
 def distinctive_terms(claim: str) -> list[str]:
     """Terms that would identify a specific technology, employer, product,
     institution or credential.
@@ -166,6 +199,8 @@ def check_grounding(
     corpus = "\n".join(
         [
             source_cv.raw_text,
+            # The candidate's own name, so a cover letter may be signed.
+            source_cv.candidate_name or "",
             *(e.text for e in source_cv.evidence),
             # A skill the candidate listed is something they claimed, so it is
             # evidence too - even when no bullet happens to spell it out.
@@ -176,9 +211,10 @@ def check_grounding(
     corpus_lower = corpus.lower()
     corpus_numbers = numbers_in(corpus)
     allowed = {
-        term.lower()
+        variant
         for phrase in context_terms
         for term in _WORD.findall(phrase)
+        for variant in (term.lower(), singular(term))
     }
 
     result = GroundingResult()
@@ -186,7 +222,9 @@ def check_grounding(
         unsupported_terms = [
             term
             for term in distinctive_terms(claim)
-            if term.lower() not in corpus_lower and term.lower() not in allowed
+            if not is_term_supported(term, corpus_lower)
+            and term.lower() not in allowed
+            and singular(term) not in allowed
         ]
         unsupported_numbers = sorted(numbers_in(claim) - corpus_numbers)
 
