@@ -86,6 +86,37 @@ match to unmet and is recorded in the trace. This is the Week 6 form of the
 project's trust requirement — the full grounding check on *generated* text is
 still Week 7.
 
+## The Week 6 pipeline (complete)
+
+`Supervisor.run(cv_source, jd_source)` executes a LangGraph `StateGraph` whose state
+*is* the existing `RunContext`:
+
+```
+START → parse_cv → parse_jd → research → score_fit → track_application → END
+```
+
+| Node | Does | Writes to state |
+| --- | --- | --- |
+| `parse_cv` | `parse_cv` tool (light tier) | `parsed_cv` |
+| `parse_jd` | `parse_jd` tool (light tier) | `job` |
+| `research` | `ResearchAgent` → `web_search` + summarise (light) | `brief`, `warnings` |
+| `score_fit` | `ScoringAgent` (heavy tier) | `fit_report` |
+| `track_application` | builds `ApplicationRecord`, `tracker.add` | `application` |
+
+The finished `RunContext` is the pipeline result — parsed inputs, brief, fit report,
+persisted record, warnings and trace — so no second result hierarchy exists.
+
+**Failure policy.** Research is best-effort: an unnamed company, a failed search, an
+empty result set or a summary that never validates each leave a warning and let the
+fit analysis finish. Scoring is essential: if it exhausts its retries the run raises
+`RetryExhaustedError` and **nothing is written to the tracker** — a failed score must
+never be mistaken for a poor one. New applications are always `draft`; nothing is ever
+auto-submitted.
+
+**Injection.** The supervisor receives its tool registry, both worker agents and the
+tracker. It never constructs a database. `build_supervisor(settings)` is the single
+place that knows production means SQLite plus a real search client.
+
 ## What the scaffold deliberately does not include
 
 Parsing, research, scoring, writing, SQLite persistence, the MCP server, and the real UI.

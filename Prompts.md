@@ -134,3 +134,33 @@ Run `python -m pytest -q` and `python -m ruff check .`; keep the suite green wit
 Then STOP. Do not connect parse → research → score → track through the Supervisor yet.
 
 ---
+
+## Prompt 5 – Supervisor and End-to-End Pipeline
+
+We are now implementing the FINAL major Week 6 component: the Supervisor and end-to-end pipeline. All components are complete and tested (135 tests passing, ruff clean). Do not redesign the architecture and do not implement Week 7 features.
+
+Implement the Supervisor connecting the existing components:
+
+CV + JD → parse_cv → parse_jd → Research Agent → Scoring Agent → ApplicationRecord → SQLite tracker → final pipeline result.
+
+Requirements:
+- Use LangGraph, as already decided. The Supervisor orchestrates; it does not perform research or scoring itself.
+- Inspect the existing `RunContext` first and extend state only if necessary.
+- Accept the input formats the parsing layer already supports (raw text and file paths); do not create another document-loading system.
+- Build the `ApplicationRecord` from the validated `FitReport`, starting in `draft`. Never auto-submit.
+- Persist through the existing `ApplicationTracker` interface — no SQL in the Supervisor, and dependency injection so tests can use the in-memory tracker.
+- Research failure must not stop the run: continue scoring and tracking, and preserve the warning.
+- Scoring failure must not produce an invalid record or a defaulted score; surface the failure cleanly.
+- Application IDs must allow the same candidate to apply to multiple roles at the same company.
+- Return enough structured information for a future UI, preferring existing models.
+- Preserve the existing tracing architecture so Week 8 can report latency and token usage.
+
+Tests must not need a live LLM, live web search, or external services. Cover the happy path, tracker persistence, two JDs against one CV, research failure, unknown company, scoring failure, human-in-the-loop status, raw-text and file inputs, stage ordering, state hand-off, dependency injection, and the LangGraph workflow building, executing, reaching END and propagating failure.
+
+Do NOT implement: Writing Agent, tailoring, cover letters, full grounding, MCP server, multi-model comparison, Streamlit UI, vector memory, auto-submission, job board integrations.
+
+Run `python -m pytest -q` and `python -m ruff check .`, plus coverage if available. Update only the architecture documentation. Then report files changed, the LangGraph structure, Supervisor responsibilities, state, injection, failure behaviour, the ID strategy, E2E tests, test count, ruff and coverage results, limitations, and whether the Week 6 pipeline now works end to end.
+
+Then STOP. Do not begin Week 7 automatically.
+
+---

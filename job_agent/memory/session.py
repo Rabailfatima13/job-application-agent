@@ -10,6 +10,7 @@ Fields are filled in pipeline order and are None until their step has run.
 from dataclasses import dataclass, field
 
 from ..models import (
+    ApplicationRecord,
     CompanyBrief,
     CoverLetter,
     FitReport,
@@ -37,6 +38,9 @@ class RunContext:
     fit_report: FitReport | None = None
     tailored_cv: TailoredCV | None = None  # Week 7
     cover_letter: CoverLetter | None = None  # Week 7
+
+    # Written by the supervisor's final step, once the fit report exists.
+    application: ApplicationRecord | None = None
 
     # Non-fatal problems worth showing the user (e.g. web search unavailable,
     # tailoring fell back to the original CV) - the run continues.
