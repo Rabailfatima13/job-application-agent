@@ -64,6 +64,28 @@ Week 5 traced through Week 4's `HookManager`. Here agents call tools directly, s
 `traced_tool_call` wraps the call site instead — and it records token counts, which the
 Week 5 version could not.
 
+**D6 — The model judges, the code scores.**
+`overall_fit` is never asked of the LLM. The scoring agent asks it one narrow
+question per requirement — met or not, and *which* CV evidence shows it — and
+`compute_fit_score` turns those answers into a number:
+
+```
+overall_fit = weight of met requirements / weight of all requirements
+              must-have = 1.0, nice-to-have = 0.5
+```
+
+Equal-weight postings reduce to "3 of 5 met = 0.6", which is explainable in one
+sentence at the final presentation and testable without a model. Only
+`requirements` are scored; `responsibilities` are not sent to the model at all.
+
+**D7 — The model points at evidence, it does not write it.**
+Judgements carry an *index* into `ParsedCV.evidence`, and the code looks up the
+wording. There is no free-text evidence field in what the model returns, so an
+invented claim has nowhere to go; an index pointing at nothing downgrades the
+match to unmet and is recorded in the trace. This is the Week 6 form of the
+project's trust requirement — the full grounding check on *generated* text is
+still Week 7.
+
 ## What the scaffold deliberately does not include
 
 Parsing, research, scoring, writing, SQLite persistence, the MCP server, and the real UI.

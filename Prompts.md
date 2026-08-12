@@ -82,3 +82,28 @@ Run `python -m pytest -q` and `python -m ruff check .`, keep the suite green, th
 Then STOP. Do not automatically implement the scoring agent.
 
 ---
+
+## Prompt 3 – Scoring Agent
+
+We are continuing the Week 6 implementation. Parsing and the persistent SQLite tracker are complete (78 tests passing, ruff clean). Do not redesign the architecture.
+
+Implement only the Scoring Agent and its tests. It must consume `ParsedCV` + `JobDescription` and produce the existing `FitReport`.
+
+Requirements:
+- Match each job requirement against the structured CV evidence, decide whether it is met, provide the evidence, identify gaps, produce recommended CV emphasis, and an overall fit score in [0,1].
+- Evidence must originate from the existing `ParsedCV` data. Do not invent candidate evidence, and do not treat the raw LLM response as authoritative.
+- Use the existing `FitReport` / `RequirementMatch` models; do not create a parallel schema or add fields for convenience.
+- The score must be explainable, not "ask the LLM for a number": establish a rubric (e.g. matched weighted requirements / total weighted requirements) and calculate it in application logic. Document the rule.
+- Keep requirements and responsibilities separate — responsibilities must not become scored requirements.
+- Recommended emphasis must refer to existing CV evidence; the Week 7 Writing Agent will consume it.
+- Use the existing ModelRouter and tier design; no direct provider imports. Use the existing validation/retry infrastructure.
+- Add a deterministic evidence-validation layer: every match has evidence, `met=True` without valid evidence is not accepted, unsupported claims never enter the FitReport, score stays in [0,1].
+- Tests with the existing stub model, including one where the expected score is calculable from known requirements (e.g. 3 of 5 → 0.6). Do not hard-code an LLM-generated number.
+
+Do NOT implement: Research Agent, Supervisor, Writing Agent, tailored CV, cover letter, full Week 7 grounding, MCP server, UI, multi-model comparison, vector memory.
+
+Run `python -m pytest -q` and `python -m ruff check .`; keep the suite green without weakening existing tests. Then report files changed, how the agent works, the exact scoring methodology, how evidence is validated, how the FitReport is generated, tests added, results, limitations, and the next recommended Week 6 step.
+
+Then STOP. Do not automatically implement the Research Agent or Supervisor.
+
+---
