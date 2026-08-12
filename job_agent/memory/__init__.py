@@ -8,6 +8,15 @@ and is not part of the required build.)
 """
 
 from .session import RunContext
-from .tracker import ApplicationTracker, InMemoryApplicationTracker
+from .tracker import (
+    ApplicationTracker,
+    InMemoryApplicationTracker,
+    SQLiteApplicationTracker,
+)
 
-__all__ = ["ApplicationTracker", "InMemoryApplicationTracker", "RunContext"]
+__all__ = [
+    "ApplicationTracker",
+    "InMemoryApplicationTracker",
+    "RunContext",
+    "SQLiteApplicationTracker",
+]

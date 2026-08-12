@@ -57,3 +57,28 @@ Then run the full test suite, the parser tests and lint, and report the files ch
 Stop after the parsing layer is complete and verified.
 
 ---
+
+## Prompt 2 – Persistent SQLite Application Tracker
+
+We are continuing the Week 6 implementation. The parsing layer is complete and verified (55 tests passing, ruff clean). Do not redesign the existing architecture.
+
+Implement the SQLite-backed `ApplicationTracker` described in the proposal.
+
+Requirements:
+- Implement the concrete `SQLiteApplicationTracker` behind the EXISTING tracker interface; do not create a second tracker abstraction or a parallel API.
+- Use the existing `ApplicationRecord` model and the existing status enum (draft/ready/submitted/archived); do not duplicate the schema or add statuses.
+- Records must survive process restarts: write in one run, reopen the same SQLite file in another, and the application is still there.
+- Use SQLite directly. Do not add an ORM. Keep it simple and local.
+- Initialize the database/schema safely if it does not exist.
+- Do not hard-code the production database path; use configuration/injection so tests use temporary databases.
+- Invalid records must not silently enter the database; handle reasonable DB errors cleanly without over-engineering.
+
+Tests must cover create, read, list, status update, persistence across tracker instances, and schema constraints (invalid fit scores, statuses, missing required fields). Tests must not touch a developer's real application database.
+
+Do NOT implement: Supervisor, Research/Scoring/Writing agents, grounding, MCP server, Streamlit tracker UI, multi-model comparison, vector memory, new DB abstraction, ORM.
+
+Run `python -m pytest -q` and `python -m ruff check .`, keep the suite green, then report files changed, how the tracker works, the schema, the operations, tests added, results, design decisions/limitations, and the next recommended Week 6 step.
+
+Then STOP. Do not automatically implement the scoring agent.
+
+---
