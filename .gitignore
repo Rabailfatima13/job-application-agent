@@ -8,9 +8,10 @@ venv/
 # Environment
 .env
 
-# Local application store (tracker DB, cached research)
-data/*.db
-data/*.json
+# Local application store: the tracker database, trace logs, and any CV or job
+# posting kept here while testing. Nothing in data/ is ever committed.
+data/*
+!data/.gitkeep
 
 # Test / tooling caches
 .pytest_cache/

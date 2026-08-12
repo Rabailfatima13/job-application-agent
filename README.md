@@ -8,41 +8,55 @@ application in a persistent store.
 Arbisoft AI Internship 2026 — Phase 3 (Weeks 5.5–8). Built to the approved project
 specification, which is the source of truth for scope and requirements.
 
-> **Status: scaffold (Week 5.5).** Interfaces, structured outputs, validation, tracing
-> and tests are in place. The agents themselves land in Week 6.
+> **Status: Week 6 complete.** The core pipeline runs end to end — parse, research,
+> score, track, persist. The writing agent, the no-fabrication grounding system, the
+> MCP server and the user-facing UI are Week 7 work and are **not** implemented yet.
 
-## The pipeline
+## The Week 6 pipeline
 
 ```
 CV + Job Description
         |
         v
-   Supervisor  ── parses inputs, routes work, assembles the result, tracks the application
+     parse_cv          ─ verbatim evidence extracted from the CV
         |
-   +----+----------------+-----------------+
-   |                     |                 |
-   v                     v                 v
-Research              Scoring           Writing          (Week 7)
-(web search)      (requirements vs.   (re-emphasis +
-   |               CV evidence)        cover letter)
-   v                     v                 v
-Company Brief       Fit Report      Tailored CV + Cover Letter
-   \                     |                 /
-    +--------------------+----------------+
-                         |
-                    Validation  ── schema + retry, then no-fabrication grounding
-                         |
-                         v
-                Application Tracker
+        v
+     parse_jd          ─ requirements vs. responsibilities, must-have vs. nice-to-have
+        |
+        v
+     research          ─ web search -> sourced company brief (best effort)
+        |
+        v
+    score_fit          ─ evidence-backed FitReport, score computed in code
+        |
+        v
+ track_application     ─ ApplicationRecord written to SQLite, always as `draft`
+        |
+        v
+       END             ─ full RunContext returned: inputs, brief, report, record,
+                         warnings, trace
 ```
+
+Orchestrated by a LangGraph `StateGraph` in
+[`job_agent/agents/supervisor.py`](job_agent/agents/supervisor.py). Full detail in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Core rule: no fabricated experience
 
-The writing agent may **re-order, re-emphasise, and re-word** the candidate's real
-content. It may **never** invent a job, project, skill, achievement, technology, or
-number of years. Every generated claim must trace back to text in the source CV; the
-grounding check strips anything that does not, and if tailoring cannot be validated the
-system returns the original CV plus the gap list rather than a bad rewrite.
+The eventual writing agent may **re-order, re-emphasise, and re-word** the candidate's
+real content. It may **never** invent a job, project, skill, achievement, technology, or
+number of years.
+
+Week 6 enforces this where it already applies, deterministically and without an LLM:
+
+- **CV parsing** drops any evidence line the model did not copy from the source CV.
+- **Scoring** lets the model return only an *index* into that evidence — it cannot write
+  evidence text — and a match claiming evidence that does not exist is downgraded to
+  unmet.
+- **Research** drops any fact citing no real search result, or carrying a number absent
+  from the result it cites.
+
+The full claim-level grounding check on *generated* documents is Week 7.
 
 ## Layout
 
@@ -50,13 +64,13 @@ system returns the original CV plus the gap list rather than a bad rewrite.
 | --- | --- |
 | `job_agent/models/` | Pydantic structured outputs: parsed CV/JD, company brief, fit report, tracker record |
 | `job_agent/llm/` | Provider-agnostic model clients + tier routing (cheap model for parsing, strong model for judgement) |
-| `job_agent/agents/` | `BaseAgent`, then supervisor + research/scoring/writing workers |
+| `job_agent/agents/` | `BaseAgent`, LangGraph supervisor, research + scoring workers (writing: Week 7) |
 | `job_agent/tools/` | Narrow, independently testable tools and the registry agents are given |
 | `job_agent/memory/` | Persistent application tracker + per-run session context |
-| `job_agent/validation/` | Schema guard with bounded retry; no-fabrication grounding check |
+| `job_agent/validation/` | Schema guard with bounded retry (no-fabrication grounding: Week 7) |
 | `job_agent/observability/` | Trace events per tool/model call with latency and token counts |
 | `job_agent/mcp_server/` | Custom MCP server exposing the tracker resource and tools (Week 7) |
-| `job_agent/app/` | Streamlit demo surface (thin — no business logic) |
+| `job_agent/app/` | Streamlit placeholder — shows configuration only, does not run the pipeline yet (Week 7) |
 | `tests/` | Unit tests per component + fixtures for the end-to-end run |
 
 ## Setup
@@ -73,25 +87,90 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in `.env`: an Anthropic key for the heavy tier, any OpenAI-compatible endpoint
-(Groq / Ollama / OpenRouter) for the light tier, and a search key for the research
-agent. No key is needed to run the tests.
+## Configuration
 
-## Running
+`.env.example` is a template holding placeholders only — copy it to `.env` and fill in
+your own values there.
+
+> **`.env` is gitignored and must stay that way.** Never commit real API keys, and never
+> paste them into source files, the README, or `.env.example`. Everything under `data/`
+> is ignored too, so a CV or job posting kept there is not committed either.
+
+| Variable | Needed for a real run | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | yes | Heavy tier — fit scoring |
+| `HEAVY_MODEL` | optional | Defaults to `claude-sonnet-5` |
+| `LIGHT_BASE_URL`, `LIGHT_API_KEY`, `LIGHT_MODEL` | yes | Cheap tier — parsing and summarising, via any OpenAI-compatible endpoint (Groq / Ollama / OpenRouter) |
+| `SEARCH_PROVIDER`, `SEARCH_API_KEY` | recommended | `serpapi` or `brave`. Without a key the run still completes; research degrades to a warning |
+| `TRACKER_DB_PATH`, `TOOL_CALL_LOG_PATH` | optional | Default to `data/applications.db` and `data/tool_calls.log` |
+
+**No key of any kind is needed to run the tests** — every test uses stubs.
+
+## Running the Week 6 pipeline
+
+There is no CLI or UI yet (Week 7). The pipeline is driven directly:
+
+```python
+from job_agent.agents import build_supervisor
+from job_agent.config import load_settings
+
+context = build_supervisor(load_settings()).run("path/to/cv.pdf", "path/to/jd.txt")
+
+print(context.job.role, context.job.company, context.job.location)
+print(context.fit_report.overall_fit, context.fit_report.gaps)
+print(context.application.application_id, context.application.status)
+print(context.warnings, context.trace.totals())
+```
+
+Both arguments accept raw text or a path to a `.pdf`, `.txt` or `.md` file.
+
+## Where data is stored
+
+| What | Where | Committed? |
+| --- | --- | --- |
+| Tracked applications (SQLite) | `data/applications.db` | no |
+| Tool/model call trace log (JSON lines) | `data/tool_calls.log` | no |
+| In-memory trace for one run | `context.trace.events` / `.totals()` | n/a |
+
+## Tests
 
 ```bash
-pytest
+python -m pytest -q
 ```
 
 ```bash
-streamlit run job_agent/app/streamlit_app.py
+python -m ruff check .
 ```
 
-## Roadmap
+```bash
+python -m pytest --cov=job_agent --cov-report=term-missing
+```
 
-- **Week 6 — core pipeline.** CV/JD parsing, research agent, scoring agent, fit report,
-  SQLite tracker, supervisor orchestration, happy-path end to end, tests.
-- **Week 7 — advanced features.** Writing agent, no-fabrication validation, retry and
-  fallback, second provider routed and compared, MCP server, UI polish.
-- **Week 8 — finalisation.** Feature freeze, full test suite, two-role E2E, tracing and
-  cost/latency numbers, documentation, demo.
+## Status
+
+**Completed in Week 6**
+
+- CV and job-description parsing from text, `.txt`/`.md`, and PDF
+- Structured Pydantic outputs at every step, with bounded schema retry
+- Verbatim CV evidence protection
+- Requirements separated from responsibilities; must-have vs. nice-to-have preserved
+- Location extracted from the posting
+- Research agent with SerpAPI/Brave search, preserved sources, number grounding
+- Evidence-grounded scoring with a deterministic, explainable fit score
+- Persistent SQLite application tracker surviving restarts
+- LangGraph supervisor running the pipeline end to end
+- Tracing of every tool and model call with latency and token counts
+- 156 tests, ruff clean, ~91% coverage
+
+**Deferred to Week 7**
+
+- Writing agent — CV tailoring and cover letter drafting
+- The full no-fabrication grounding system for generated documents
+- Custom MCP server
+- Multi-model routing comparison
+- Additional LangGraph branches (fit threshold, validation retry, next-role loop)
+- Streamlit UI and a user-facing runner
+- Research caching and cost/latency tuning
+
+**Week 8** — feature freeze, two-role end-to-end run, cost/latency numbers, final
+documentation and demo.
