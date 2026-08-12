@@ -1,0 +1,17 @@
+Mahnoor Rauf
+AI / ML Intern
+
+EXPERIENCE
+Arbisoft - AI Internship (2026)
+- Built a Task Management REST API with FastAPI, SQLAlchemy and SQLite, with Pydantic validation and pytest coverage.
+- Built a research agent with tool calling, session memory and pre/post-tool hooks.
+- Built a multi-agent orchestration layer with a supervisor, two workers, a custom MCP server and structured outputs.
+
+PROJECTS
+- Task Manager API: JWT authentication, per-user task authorization, integration tests.
+
+SKILLS
+Python, FastAPI, SQLAlchemy, SQLite, Pydantic, pytest, Docker, MCP, prompt engineering
+
+EDUCATION
+BS Computer Science

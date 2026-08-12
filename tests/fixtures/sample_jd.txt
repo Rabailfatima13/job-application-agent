@@ -1,0 +1,16 @@
+Junior AI Engineer - Arbisoft (Lahore, hybrid)
+
+About the role
+We are looking for a junior engineer to help build LLM-backed product features.
+
+Requirements
+- Strong Python
+- Experience building REST APIs (FastAPI or similar)
+- Familiarity with LLM APIs and prompt engineering
+- Testing discipline (pytest)
+- Comfortable with SQL databases
+
+Nice to have
+- Experience with agent frameworks or the Model Context Protocol
+- Kubernetes / cloud deployment experience
+- Front-end familiarity (React)

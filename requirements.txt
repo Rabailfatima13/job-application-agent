@@ -1,0 +1,23 @@
+# Core
+pydantic>=2          # structured outputs + validation (proposal S13/S14)
+python-dotenv        # load .env
+langgraph            # supervisor/worker orchestration graph (proposal S15)
+
+# Model providers (>= 2 required by FR-11)
+anthropic            # heavy steps: scoring, writing
+openai               # light steps via any OpenAI-compatible endpoint (Groq/Ollama/OpenRouter)
+
+# Tools
+httpx                # web-search HTTP calls
+pypdf                # read a CV supplied as PDF
+
+# Protocol
+mcp                  # custom MCP server exposing tracker + tools (FR-8)
+
+# Demo surface
+streamlit
+
+# Dev
+pytest
+pytest-cov
+ruff

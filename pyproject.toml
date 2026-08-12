@@ -1,0 +1,22 @@
+[project]
+name = "job-application-agent"
+version = "0.1.0"
+description = "Multi-agent system that researches a company, scores CV/role fit, tailors application material without fabricating experience, and tracks applications."
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+include = ["job_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["job_agent"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
