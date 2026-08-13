@@ -7,7 +7,7 @@ rewording and reordering are fine, inventing is not.
 
 import pytest
 
-from job_agent.models import CVEvidence, ParsedCV
+from job_agent.models import CompanyBrief, CVEvidence, ParsedCV, Source
 from job_agent.validation import (
     EntailmentVerdicts,
     GroundingResult,
@@ -16,9 +16,12 @@ from job_agent.validation import (
     split_sentences,
 )
 from job_agent.validation.grounding import (
+    build_company_context,
     build_entailment_prompt,
     distinctive_terms,
+    is_candidate_claim,
     numbers_in,
+    refers_to_company,
     singular,
 )
 
@@ -313,6 +316,190 @@ def test_the_candidates_own_name_is_grounded(cv):
 def test_a_template_placeholder_is_still_flagged(cv):
     # The prompt is what stops these being written; grounding stays strict.
     assert not check("Sincerely, [Candidate]", cv).passed
+
+
+@pytest.mark.parametrize(
+    "claim", ["[Candidate]", "[Your Name]", "[Hiring Manager]", "Dear [Company] team"]
+)
+def test_a_bracketed_placeholder_is_flagged_wherever_it_appears(cv, claim):
+    # Including as the only word on a line, where the sentence-initial rule
+    # would otherwise skip it.
+    assert not check(claim, cv).passed
+
+
+# --- Two evidence domains: candidate vs company ------------------------------
+#
+# The rule under test: verified company facts may support statements ABOUT THE
+# COMPANY, and may never support a claim about the candidate.
+
+COMPANY_CONTEXT = (
+    "Arbisoft\n"
+    "Arbisoft is a global software and product development company.\n"
+    "Arbisoft uses Python, Django and Flask\n"
+    "Arbisoft specializes in AI, Data Science and custom development\n"
+    "86% of Arbisoft employees would recommend working there to a friend\n"
+)
+
+
+def company_check(claim: str, cv: ParsedCV) -> GroundingResult:
+    return check_grounding(
+        [claim],
+        cv,
+        context_terms=("Arbisoft", "Junior AI Engineer"),
+        company_context=COMPANY_CONTEXT,
+        company_name="Arbisoft",
+    )
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "I have experience with Django.",
+        "My Django skills align with Arbisoft.",
+        "I have worked with Django on production systems.",
+        "I have experience in Data Science.",
+        "My background in Data Science fits the role.",
+        "I improved performance by 86%.",
+        "I achieved an 86% reduction in latency.",
+    ],
+)
+def test_a_company_fact_can_never_support_a_candidate_claim(cv, claim):
+    # The core security rule. Django, Data Science and 86% are all in the
+    # company context and none are in the CV.
+    assert not company_check(claim, cv).passed, claim
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Your company uses Django.",
+        "Arbisoft uses Django and Flask.",
+        "86% of employees recommend the company.",
+        "I am interested in Arbisoft's AI work.",
+        "I am drawn to the company's Data Science work.",
+        "Arbisoft specializes in AI and Data Science.",
+    ],
+)
+def test_a_statement_about_the_company_may_cite_the_verified_brief(cv, claim):
+    assert company_check(claim, cv).passed, claim
+
+
+def test_the_advertised_role_title_cannot_license_a_candidate_skill(cv):
+    # Found live: the role is "Junior AI Engineer", so "AI" was allowed as an
+    # employer proper noun - and leaked into a claim about the candidate.
+    assert not company_check("My AI skills match Arbisoft's work.", cv).passed
+    assert not company_check("I have strong AI experience.", cv).passed
+
+
+def test_a_skill_named_in_the_role_title_is_still_not_evidence(cv):
+    # The general form of the same hole: a role called "Kubernetes Engineer"
+    # must not make Kubernetes claimable.
+    result = check_grounding(
+        ["I have deep Kubernetes experience."],
+        cv,
+        context_terms=("Arbisoft", "Kubernetes Engineer"),
+        company_name="Arbisoft",
+    )
+
+    assert not result.passed
+
+
+def test_a_company_named_by_its_leading_word_still_counts_as_the_subject():
+    # "Arbisoft Pvt Ltd" referred to as just "Arbisoft".
+    assert refers_to_company("Arbisoft builds platforms.", "Arbisoft Pvt Ltd")
+    assert not refers_to_company("Netflix builds platforms.", "Arbisoft Pvt Ltd")
+
+
+def test_naming_the_role_is_still_allowed_in_a_company_statement(cv):
+    assert company_check(
+        "I am applying for the Junior AI Engineer role at Arbisoft.", cv
+    ).passed
+
+
+def test_the_rejection_explains_that_the_fact_belongs_to_the_company(cv):
+    result = company_check("I have experience with Django.", cv)
+
+    reason = result.issues[0].reason
+    assert "Django" in reason
+    assert "something the company does" in reason
+
+
+def test_company_context_is_ignored_entirely_for_candidate_claims(cv):
+    # Same claim, same CV: the company context must make no difference.
+    with_context = company_check("I have experience with Django.", cv)
+    without_context = check_grounding(["I have experience with Django."], cv)
+
+    assert not with_context.passed and not without_context.passed
+
+
+def test_an_unattributed_claim_defaults_to_the_strict_candidate_domain(cv):
+    # No "I", no company reference: it must NOT quietly borrow a company fact.
+    assert not company_check("Built Django services for clients.", cv).passed
+
+
+def test_a_mixed_sentence_is_judged_as_a_candidate_claim(cv):
+    # Naming the company must not launder a claim about the candidate.
+    assert not company_check(
+        "Arbisoft uses Django, and I have built Django services.", cv
+    ).passed
+
+
+def test_company_facts_never_widen_the_cv_for_the_tailored_cv_path(cv):
+    # The tailored CV is checked with no company context at all.
+    assert not check_grounding(["Built Django services."], cv).passed
+
+
+def test_a_fabrication_absent_from_both_domains_still_fails(cv):
+    for claim in (
+        "Your company uses Kubernetes.",  # not in the brief either
+        "I hold an AWS certification.",
+        "I studied at Stanford.",
+    ):
+        assert not company_check(claim, cv).passed, claim
+
+
+def test_claim_subject_detection():
+    assert is_candidate_claim("I have experience with Django.", "Arbisoft")
+    assert is_candidate_claim("My skills include Django.", "Arbisoft")
+    # First person, but the predicate is an attitude, not experience.
+    assert not is_candidate_claim("I am interested in Arbisoft's AI work.", "Arbisoft")
+    assert not is_candidate_claim("Your company uses Django.", "Arbisoft")
+    assert not is_candidate_claim("Arbisoft builds data platforms.", "Arbisoft")
+    # Unattributed defaults to candidate, i.e. strict.
+    assert is_candidate_claim("Built Django services.", "Arbisoft")
+
+
+def test_the_existing_regressions_survive_the_two_domain_change(cv):
+    # Everything the earlier live runs taught us, re-checked with company
+    # context switched on.
+    assert company_check(
+        "I have experience building REST APIs with FastAPI and testing with pytest.",
+        cv,
+    ).passed
+    for fabrication in (
+        "I managed Kubernetes clusters.",
+        "AWS Certified Solutions Architect.",
+        "I improved latency by 40%.",
+        "MSc from Stanford University.",
+        "Sincerely, [Candidate]",
+    ):
+        assert not company_check(fabrication, cv).passed, fabrication
+
+
+def test_build_company_context_uses_only_verified_brief_material():
+    brief = CompanyBrief(
+        company="Arbisoft",
+        summary="Arbisoft builds data platforms.",
+        facts=["Uses Django."],
+        sources=[Source(title="Arbisoft home", url="https://arbisoft.com")],
+    )
+
+    context = build_company_context(brief)
+
+    assert "Arbisoft builds data platforms." in context
+    assert "Uses Django." in context
+    assert "Arbisoft home" in context
+    assert build_company_context(None) == ""
 
 
 # --- Model-assisted second stage --------------------------------------------

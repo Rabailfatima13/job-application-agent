@@ -15,6 +15,7 @@ from job_agent.agents.research import (
     NO_COMPANY_SUMMARY,
     build_query,
     build_summarisation_prompt,
+    mentions_company,
     unsupported_numbers,
 )
 from job_agent.memory.session import RunContext
@@ -101,8 +102,116 @@ def job() -> JobDescription:
 # --- Query construction ------------------------------------------------------
 
 
-def test_the_query_combines_company_role_and_a_couple_of_technologies(job):
-    assert build_query(job) == "Arbisoft Junior AI Engineer Python FastAPI"
+def test_the_query_targets_the_company_not_the_job(job):
+    # A live run searched "Arbisoft Junior AI Engineer Python FastAPI" and got
+    # back job boards and strangers' profiles. The query is now about the
+    # employer; role relevance is applied in the summariser instead.
+    query = build_query(job)
+
+    assert query == '"Arbisoft" company overview'
+    assert "Junior AI Engineer" not in query
+    assert "FastAPI" not in query
+
+
+def test_the_company_name_is_quoted_so_it_stays_the_primary_target():
+    job = JobDescription(
+        role="Data Engineer", company="Acme Data Systems", raw_text="...", skills=["Go"]
+    )
+
+    query = build_query(job)
+
+    assert query.startswith('"Acme Data Systems"')
+    assert "Data Engineer" not in query.removeprefix('"Acme Data Systems"')
+
+
+def test_the_query_holds_no_employer_specific_logic():
+    for company in ("Arbisoft", "Netflix", "A Very Small Studio"):
+        job = JobDescription(role="Engineer", company=company, raw_text="...")
+        assert build_query(job) == f'"{company}" company overview'
+
+
+# --- Relevance guard ---------------------------------------------------------
+
+
+def test_results_that_never_mention_the_company_are_discarded(make_router, job):
+    collector = TraceCollector()
+    noise = [
+        SearchResult(
+            title="Laraib Arjamand - Software Engineer | Python | Django",
+            url="https://example.com/profile",
+            snippet="Software engineer working with Python and Django.",
+        ),
+        SearchResult(
+            title="Senior Python AI Engineer (FastAPI) - Hybrid London",
+            url="https://example.com/job",
+            snippet="A vacancy at another employer paying $35/hr.",
+        ),
+    ]
+    agent, _, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), [*RESULTS, *noise], collector=collector
+    )
+
+    brief = agent.research(job)
+
+    # Only the two genuinely-about-Arbisoft results could be cited.
+    assert {s.url for s in brief.sources} <= {r.url for r in RESULTS}
+    guard = [e for e in collector.events if e.name == "research:relevance_guard"]
+    assert guard and guard[0].arguments == {"kept": 2, "dropped": 2}
+
+
+def test_irrelevant_results_never_reach_the_summariser(make_router, job):
+    off_topic = SearchResult(
+        title="Some other company's careers page",
+        url="https://example.com/other",
+        snippet="A totally unrelated employer hiring engineers.",
+    )
+    agent, _, router = build_agent(
+        make_router, json.dumps(EXTRACTION), [RESULTS[0], off_topic]
+    )
+
+    agent.research(job)
+
+    prompt = router.client("light").calls[0]["messages"][0]["content"]
+    assert "totally unrelated employer" not in prompt
+
+
+def test_a_result_set_with_nothing_about_the_company_degrades_honestly(
+    make_router, job
+):
+    off_topic = [
+        SearchResult(title="Unrelated", url="https://example.com", snippet="Nothing.")
+    ]
+    agent, _, router = build_agent(make_router, json.dumps(EXTRACTION), off_topic)
+
+    brief = agent.research(job)
+
+    assert brief.facts == [] and brief.sources == []
+    assert "nothing that mentions the company" in brief.summary
+    assert router.client("light").calls == []  # nothing worth summarising
+
+
+def test_a_multi_word_company_matches_on_its_leading_word():
+    long_name = SearchResult(
+        title="Arbisoft engineering blog",
+        url="https://arbisoft.com/blog",
+        snippet="Engineering practice.",
+    )
+
+    assert mentions_company(long_name, "Arbisoft Pvt Ltd")
+    assert not mentions_company(long_name, "Netflix")
+
+
+def test_an_empty_company_name_matches_nothing():
+    result = SearchResult(title="Anything", url="https://example.com", snippet="text")
+
+    assert not mentions_company(result, "   ")
+
+
+def test_a_very_short_company_name_is_not_matched_loosely():
+    # A two-letter head would match almost anything; require a real word.
+    result = SearchResult(title="Sonic boom", url="https://example.com", snippet="")
+
+    assert not mentions_company(result, "So Ltd")
 
 
 def test_the_search_tool_is_called_with_a_bounded_result_count(make_router, job):
@@ -111,7 +220,7 @@ def test_the_search_tool_is_called_with_a_bounded_result_count(make_router, job)
     agent.research(job, max_results=3)
 
     (call,) = tool.calls
-    assert call["query"].startswith("Arbisoft Junior AI Engineer")
+    assert "Arbisoft" in call["query"]
     assert call["max_results"] == 3
 
 

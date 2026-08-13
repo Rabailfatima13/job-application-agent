@@ -178,6 +178,38 @@ claim, never rehabilitate one stage 1 rejected. The call is made by the writing 
 through the existing router, so no provider is named in the validation layer and the
 call is traced like any other.
 
+### D11 — Two evidence domains, never merged
+
+The proposal wants the cover letter grounded in the CV **and** the company brief. Merging
+the two corpora would be a trust hole: "Arbisoft uses Django" would silently license "I
+have Django experience". So the checker keeps them apart and decides, per claim, which
+one applies:
+
+- first person **plus** an experience word ("I have experience…", "my skills…") →
+  **candidate claim**, CV corpus only. This wins even when the company is also named, so
+  a mixed sentence is judged strictly.
+- otherwise, if the subject is the employer ("your company", "the team", the company or
+  role named) → **company statement**, which may additionally cite the verified brief.
+- anything else → candidate, i.e. strict. A bare "Built Django services." cannot quietly
+  borrow a company fact.
+
+The tailored CV is checked with no company context at all. The employer's proper nouns
+are a *naming* allowance for company statements only — a role advertised as "Junior AI
+Engineer" must not make "my AI skills" supportable, any more than "Kubernetes Engineer"
+would license Kubernetes.
+
+Errors trend towards false rejection rather than fabrication, which is the direction this
+project wants to fail in.
+
+### D12 — Research searches for the company, not the job
+
+A live run searched "Arbisoft Junior AI Engineer Python FastAPI" and got a stranger's
+LinkedIn profile, an Instagram post and a vacancy at a different company — then
+attributed them to the target employer. Company name plus role plus technologies *is* a
+job search. The query is now `"<company>" company overview`, role relevance is applied in
+the summariser prompt instead, and a relevance guard discards any result that never
+mentions the company before the summariser sees it.
+
 ### D10 — A failed rewrite costs the documents, not the run
 
 If the writer cannot produce grounded material within its attempt budget it raises

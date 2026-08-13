@@ -30,15 +30,20 @@ from .base import BaseAgent
 RESEARCH_STEP = "summarise"
 RESEARCH_MAX_TOKENS = 1024
 
-# How many JD skills to fold into the query. Two keeps the search on the
-# company and role rather than drifting into a technology search.
-QUERY_SKILL_COUNT = 2
+# Appended to the company name so the search leans towards company information
+# rather than vacancies. Generic on purpose - nothing here is specific to any
+# one employer.
+COMPANY_QUERY_SUFFIX = "company overview"
 
 NO_COMPANY_SUMMARY = (
     "The job description does not name an employer, so no company research "
     "was performed."
 )
 NO_RESULTS_SUMMARY = "No search results were returned, so no company facts are available."
+NO_RELEVANT_RESULTS_SUMMARY = (
+    "The search returned nothing that mentions the company, so no company facts "
+    "are available."
+)
 SEARCH_FAILED_SUMMARY = (
     "Company research was unavailable because the web search could not be completed."
 )
@@ -137,8 +142,35 @@ class ResearchAgent(BaseAgent):
         if not results:
             return self._unavailable(job.company, NO_RESULTS_SUMMARY)
 
+        results = self._keep_relevant(results, job.company)
+        if not results:
+            return self._unavailable(job.company, NO_RELEVANT_RESULTS_SUMMARY)
+
         extraction = self._summarise(job, results)
         return self._ground(extraction, results, job.company)
+
+    def _keep_relevant(
+        self, results: list[SearchResult], company: str
+    ) -> list[SearchResult]:
+        """Drop results that never name the company, before they are summarised.
+
+        Cheaper and safer than trying to catch the misattribution afterwards:
+        material the summariser never sees cannot become a fact about the wrong
+        employer.
+        """
+        kept = [r for r in results if mentions_company(r, company)]
+        dropped = len(results) - len(kept)
+        if dropped and self.collector is not None:
+            with traced_tool_call(
+                self.collector,
+                agent=self.name,
+                name="research:relevance_guard",
+                arguments={"kept": len(kept), "dropped": dropped},
+            ) as outcome:
+                outcome["result"] = "; ".join(
+                    r.title for r in results if r not in kept
+                )
+        return kept
 
     @staticmethod
     def _unavailable(company: str, summary: str) -> CompanyBrief:
@@ -234,13 +266,43 @@ class ResearchAgent(BaseAgent):
 
 
 def build_query(job: JobDescription) -> str:
-    """Company + role + a couple of the posting's own technologies.
+    """A query about the *company*, not about the job.
 
-    Short by design: the brief needs to be role-relevant, not exhaustive, and
-    every extra term narrows the results in ways that are hard to predict.
+    A live run searched "Arbisoft Junior AI Engineer Python FastAPI" and got
+    back a stranger's LinkedIn profile, an Instagram post and a vacancy at a
+    different company - because a company name plus a role title plus
+    technologies is, to a search engine, a job search. The summariser then
+    attributed those postings to the target company.
+
+    So the role and the posting's technologies are deliberately *not* in the
+    query. Role relevance is applied where it belongs: the summariser is told
+    which role is being applied for (see `build_summarisation_prompt`) and asked
+    to keep the brief relevant to it. The company name is quoted so it stays the
+    primary target rather than one keyword among many.
     """
-    parts = [job.company, job.role, *job.skills[:QUERY_SKILL_COUNT]]
-    return " ".join(part for part in parts if part).strip()
+    company = job.company.strip()
+    return f'"{company}" {COMPANY_QUERY_SUFFIX}'.strip()
+
+
+def mentions_company(result: SearchResult, company: str) -> bool:
+    """Whether a result is plausibly about the target company at all.
+
+    A deliberately blunt relevance guard: the company has to be named in the
+    title or the snippet. It is what stops a vacancy at some other employer
+    becoming a "fact" about this one - the number check cannot catch a
+    misattribution, because the figure really is in the cited text.
+
+    Matching allows the first significant word of a multi-word company name, so
+    "Arbisoft Ltd" still matches a page that just says "Arbisoft".
+    """
+    haystack = f"{result.title} {result.snippet}".lower()
+    name = company.strip().lower()
+    if not name:
+        return False
+    if name in haystack:
+        return True
+    head = name.split()[0]
+    return len(head) > 2 and head in haystack
 
 
 def build_summarisation_prompt(job: JobDescription, results: list[SearchResult]) -> str:

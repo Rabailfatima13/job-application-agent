@@ -47,8 +47,8 @@ Orchestrated by a LangGraph `StateGraph` in
 
 ## Core rule: no fabricated experience
 
-The eventual writing agent may **re-order, re-emphasise, and re-word** the candidate's
-real content. It may **never** invent a job, project, skill, achievement, technology, or
+The writing agent may **re-order, re-emphasise, and re-word** the candidate's real
+content. It may **never** invent a job, project, skill, achievement, technology, or
 number of years.
 
 This is enforced at every stage, deterministically and without an LLM:
@@ -57,13 +57,30 @@ This is enforced at every stage, deterministically and without an LLM:
 - **Scoring** lets the model return only an *index* into that evidence — it cannot write
   evidence text — and a match claiming evidence that does not exist is downgraded to
   unmet.
-- **Research** drops any fact citing no real search result, or carrying a number absent
-  from the result it cites.
-- **Writing (Week 7)** validates every generated bullet and every cover-letter sentence
-  against the CV. A line may be reworded, reordered or combined from two real bullets —
-  but a technology, employer, qualification, metric or duration the CV never stated is
-  rejected, the model is told exactly what was unsupported, and it rewrites. If it
-  cannot, no documents are returned at all and the original CV plus the gap list stand.
+- **Research** searches for the *company* (not the job), discards results that never
+  mention it, and drops any fact citing no real result or carrying a number absent from
+  the result it cites.
+- **Writing** validates every generated bullet and every cover-letter sentence. A line
+  may be reworded, reordered or combined from two real bullets — but a technology,
+  employer, qualification, metric or duration the CV never stated is rejected, the model
+  is told exactly what was unsupported, and it rewrites. If it cannot, no documents are
+  returned at all and the original CV plus the gap list stand.
+
+### Two evidence domains
+
+The cover letter may cite the researched company; the candidate's claims may not.
+
+| Domain | Corpus | Supports |
+| --- | --- | --- |
+| **Candidate** | CV raw text, parsed evidence, listed skills, candidate name | every claim about the candidate's experience, skills, education, employers, certifications and metrics |
+| **Company** | the verified company brief — summary, facts, source titles | statements about the company only |
+
+They are never merged. So `"Arbisoft uses Django"` lets the letter say *"your company uses
+Django"* or *"your Django work interests me"*, and never *"I have Django experience"* —
+unless Django is independently in the CV. The tailored CV is checked against the
+candidate domain alone. A claim whose subject is not clearly the employer defaults to the
+strict candidate domain, and the advertised role title grants no evidence either: a role
+called "Kubernetes Engineer" does not make Kubernetes claimable.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (D8–D10) for why grounding is a
 separate layer from schema validation.
@@ -174,9 +191,12 @@ python -m pytest --cov=job_agent --cov-report=term-missing
 
 **In progress — Week 7**
 
-- ✅ No-fabrication grounding system (`validation/grounding.py`)
+- ✅ No-fabrication grounding system (`validation/grounding.py`), with two strictly
+  separated evidence domains
 - ✅ Writing agent — tailored CV and cover letter, grounded or not returned
 - ✅ Supervisor integration: optional `write_application` stage
+- ✅ Company-oriented research query plus a relevance guard on search results
+- ✅ Verified end to end against live models and live web search
 - ⬜ Custom MCP server
 - ⬜ Multi-model routing comparison
 - ⬜ Additional LangGraph branches (fit threshold, next-role loop)

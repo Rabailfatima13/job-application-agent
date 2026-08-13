@@ -11,7 +11,13 @@ import json
 import pytest
 
 from job_agent.agents import WritingAgent
-from job_agent.agents.writing import WRITING_SYSTEM_PROMPT, build_writing_prompt
+from job_agent.agents.writing import (
+    WRITING_SYSTEM_PROMPT,
+    build_writing_prompt,
+    is_letter_boilerplate,
+    letter_claims,
+    strip_salutation,
+)
 from job_agent.memory.session import RunContext
 from job_agent.models import (
     CompanyBrief,
@@ -232,6 +238,149 @@ def test_a_plural_reference_to_real_cv_content_survives_grounding(
 
     assert tailored.bullets == ["Built REST APIs with FastAPI, SQLAlchemy and SQLite."]
     assert "REST APIs" in letter.body
+
+
+def test_a_standard_salutation_causes_no_grounding_retry(make_router, cv, job, report):
+    # The live run wasted an attempt on "Dear Hiring Team at Arbisoft," because
+    # "Hiring" read as an unsupported proper noun. A standard salutation on its
+    # own line is format, not a claim.
+    collector = TraceCollector()
+    letter = (
+        "Dear Hiring Team,\n\n"
+        "I built a research agent with tool calling and session memory.\n\n"
+        "Sincerely,\n"
+        "Mahnoor Rauf"
+    )
+    agent = agent_for(
+        make_router,
+        [json.dumps({**GOOD_DRAFT, "cover_letter": letter})],
+        collector=collector,
+    )
+
+    _, written = agent.write(cv, job, report)
+
+    assert "Dear Hiring Team," in written.body
+    assert len(agent.router.client("heavy").calls) == 1  # no retry
+    assert [e for e in collector.events if e.name == "writing:grounding_guard"] == []
+
+
+def test_the_prompt_pins_the_salutation_and_layout():
+    assert "Dear Hiring Team," in WRITING_SYSTEM_PROMPT
+    assert "do not address a named person" in WRITING_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["Dear Hiring Team,", "  Dear Hiring Team,  ", "Dear Hiring Manager:", "Sincerely,",
+     "Best regards,", "Kind regards", "Yours faithfully,"],
+)
+def test_boilerplate_lines_are_recognised(line):
+    assert is_letter_boilerplate(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Anything carrying a claim must never be treated as boilerplate.
+        "Dear Hiring Team, I have 10 years of Kubernetes experience.",
+        "Sincerely, [Candidate]",
+        "Sincerely yours, an AWS Certified Solutions Architect",
+        "I built a research agent.",
+    ],
+)
+def test_lines_carrying_claims_are_not_boilerplate(line):
+    assert not is_letter_boilerplate(line)
+
+
+def test_the_signature_line_is_still_checked(make_router, cv, job, report):
+    # Exempting the valediction must not exempt the name after it.
+    letter = (
+        "Dear Hiring Team,\n\n"
+        "I built a research agent with tool calling.\n\n"
+        "Sincerely,\n"
+        "[Candidate]"
+    )
+    agent = agent_for(
+        make_router, [json.dumps({**GOOD_DRAFT, "cover_letter": letter})] * 3
+    )
+
+    with pytest.raises(RetryExhaustedError) as exc:
+        agent.write(cv, job, report)
+
+    assert "Candidate" in str(exc.value)
+
+
+def test_a_fabrication_after_a_salutation_is_still_caught(make_router, cv, job, report):
+    letter = (
+        "Dear Hiring Team,\n\n"
+        "I hold an AWS Certified Solutions Architect qualification.\n\n"
+        "Sincerely,\n"
+        "Mahnoor Rauf"
+    )
+    agent = agent_for(
+        make_router, [json.dumps({**GOOD_DRAFT, "cover_letter": letter})] * 3
+    )
+
+    with pytest.raises(RetryExhaustedError) as exc:
+        agent.write(cv, job, report)
+
+    assert "AWS" in str(exc.value)
+
+
+def test_an_inline_salutation_causes_no_grounding_retry(make_router, cv, job, report):
+    # What the model actually writes: the greeting glued to the first sentence.
+    # A live run lost its documents to this.
+    collector = TraceCollector()
+    inline = {
+        **GOOD_DRAFT,
+        "cover_letter": (
+            "Dear Hiring Team, I am excited to apply for the Junior AI Engineer "
+            "role at Arbisoft. I built a research agent with tool calling."
+        ),
+    }
+    agent = agent_for(make_router, [json.dumps(inline)], collector=collector)
+
+    _, letter = agent.write(cv, job, report)
+
+    assert letter.body.startswith("Dear Hiring Team,")
+    assert len(agent.router.client("heavy").calls) == 1  # no retry
+    assert [e for e in collector.events if e.name == "writing:grounding_guard"] == []
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        ("Dear Hiring Team, I built a service.", "I built a service."),
+        ("Dear Hiring Manager: I built a service.", "I built a service."),
+        ("  Dear Team,   I built a service.", "I built a service."),
+        # Not a salutation - left completely alone.
+        ("I built a service.", "I built a service."),
+        ("Dearly held beliefs about APIs.", "Dearly held beliefs about APIs."),
+    ],
+)
+def test_only_the_greeting_is_stripped(sentence, expected):
+    assert strip_salutation(sentence) == expected
+
+
+def test_a_fabrication_after_an_inline_salutation_is_still_caught(
+    make_router, cv, job, report
+):
+    inline = {
+        **GOOD_DRAFT,
+        "cover_letter": "Dear Hiring Team, I have 10 years of Kubernetes experience.",
+    }
+    agent = agent_for(make_router, [json.dumps(inline)] * 3)
+
+    with pytest.raises(RetryExhaustedError) as exc:
+        agent.write(cv, job, report)
+
+    assert "Kubernetes" in str(exc.value)
+
+
+def test_letter_claims_splits_by_line_then_sentence():
+    body = "Dear Hiring Team,\n\nOne claim. Two claims.\n\nSincerely,\nMahnoor Rauf"
+
+    assert letter_claims(body) == ["One claim.", "Two claims.", "Mahnoor Rauf"]
 
 
 def test_the_prompt_is_honest_when_there_is_no_company_research(cv, job, report):

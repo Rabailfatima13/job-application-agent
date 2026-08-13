@@ -22,6 +22,8 @@ validation cannot detect a fabrication, and grounding cannot detect a malformed
 response. See validation/grounding.py for why.
 """
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..memory.session import RunContext
@@ -43,7 +45,11 @@ from ..validation import (
     generate_validated,
     split_sentences,
 )
-from ..validation.grounding import ENTAILMENT_SYSTEM_PROMPT, build_entailment_prompt
+from ..validation.grounding import (
+    ENTAILMENT_SYSTEM_PROMPT,
+    build_company_context,
+    build_entailment_prompt,
+)
 from .base import BaseAgent
 
 WRITING_STEP = "tailor_cv"
@@ -54,6 +60,61 @@ VERIFY_MAX_TOKENS = 1024
 # How many times the writer may be sent back to fix unsupported claims before
 # the run is abandoned. Bounded for the same reason the schema guard is.
 DEFAULT_GROUNDING_ATTEMPTS = 3
+
+
+# A letter's opening and closing lines are format, not claims about the
+# candidate: "Dear Hiring Team," asserts nothing that could be true or false of
+# them. A live run wasted an attempt when "Hiring" was read as an unsupported
+# proper noun. These patterns are deliberately tight - a single short line that
+# is nothing but a salutation or a valediction - so nothing factual can hide
+# behind them. The signature line itself is NOT exempt: it still has to name
+# someone the CV names, which is what keeps "[Candidate]" rejected.
+_SALUTATION = re.compile(r"^dear\b[^.!?]{0,60}[,:]$", re.IGNORECASE)
+_SALUTATION_PREFIX = re.compile(r"^\s*dear\b[^.!?]{0,60}?[,:]\s*", re.IGNORECASE)
+_VALEDICTION = re.compile(
+    r"^(sincerely|regards|best regards|kind regards|best wishes|"
+    r"yours (sincerely|faithfully|truly))\s*[,.]?$",
+    re.IGNORECASE,
+)
+
+
+def is_letter_boilerplate(line: str) -> bool:
+    """True for a standalone salutation or valediction line."""
+    stripped = line.strip()
+    return bool(_SALUTATION.match(stripped) or _VALEDICTION.match(stripped))
+
+
+def strip_salutation(claim: str) -> str:
+    """Remove a leading "Dear ...," from a claim, keeping the rest intact.
+
+    Asking the model to put the salutation on its own line is not enough: a
+    live run showed it writing "Dear Hiring Team, I am excited to apply..." as
+    one sentence two attempts out of three, and the greeting then read as an
+    unsupported proper noun. Only the greeting itself is removed - whatever
+    follows it is still checked exactly as strictly as before.
+    """
+    return _SALUTATION_PREFIX.sub("", claim, count=1).strip()
+
+
+def letter_claims(body: str) -> list[str]:
+    """The checkable claims in a cover letter.
+
+    Split by line first, then by sentence, so a salutation on its own line is
+    its own unit and can be recognised as boilerplate instead of being glued to
+    the first real sentence. Everything that is not boilerplate is checked
+    exactly as strictly as before.
+    """
+    claims: list[str] = []
+    for line in body.splitlines():
+        if not line.strip() or is_letter_boilerplate(line):
+            continue
+        for sentence in split_sentences(line):
+            # Handles the salutation written inline with the first sentence,
+            # which is what models actually do.
+            remainder = strip_salutation(sentence)
+            if remainder:
+                claims.append(remainder)
+    return claims
 
 
 class WritingDraft(BaseModel):
@@ -91,9 +152,23 @@ cover_letter: 3-4 short paragraphs addressed to the company, drawing only on \
 the evidence, plus the company facts supplied. Do not claim knowledge of the \
 company beyond those facts.
 
-Never write a template placeholder such as [Candidate], [Your Name], [Date] or \
-[Hiring Manager]. Sign off with the candidate's name exactly as it is given, \
-and if no name is given, end the letter without a signature line.
+Lay the letter out like this, each on its own line:
+    Dear Hiring Team,
+    <paragraphs>
+    Sincerely,
+    <the candidate's name>
+
+You may refer to the company using the COMPANY FACTS supplied - "your work on \
+X", "the company's Y" - and that is encouraged, it is what makes the letter \
+specific. But a fact about the company is never a fact about the candidate: if \
+the company works with a technology the CV does not mention, you may say the \
+company works with it and you may say it interests you, and you may NOT say \
+the candidate has used it, knows it, or has skills in it.
+
+Use exactly "Dear Hiring Team," as the salutation - do not address a named \
+person, a department or the company. Never write a template placeholder such \
+as [Candidate], [Your Name], [Date] or [Hiring Manager]. If no candidate name \
+is given, end the letter without a signature line.
 
 Reply with a single JSON object and nothing else:
 {"bullets": [str], "omitted": [str], "cover_letter": str}"""
@@ -148,7 +223,7 @@ class WritingAgent(BaseAgent):
 
         for _ in range(self.grounding_attempts):
             draft = self._draft(cv, job, report, brief, grounding_feedback)
-            last_result = self._ground(draft, cv, job)
+            last_result = self._ground(draft, cv, job, brief)
             if last_result.is_clean:
                 return self._build_outputs(draft, job)
             grounding_feedback = last_result.feedback()
@@ -206,17 +281,38 @@ class WritingAgent(BaseAgent):
     # --- validation ---------------------------------------------------------
 
     def _ground(
-        self, draft: WritingDraft, cv: ParsedCV, job: JobDescription
+        self,
+        draft: WritingDraft,
+        cv: ParsedCV,
+        job: JobDescription,
+        brief: CompanyBrief | None = None,
     ) -> GroundingResult:
-        """Check every generated line against the candidate's real CV.
+        """Check every generated line, in two separate evidence domains.
 
-        The cover letter is checked sentence by sentence, so one bad sentence
-        is reported precisely rather than condemning the whole letter. The
-        employer's own proper nouns are allowed as context - a cover letter has
-        to be able to name the company it is addressed to.
+        The **tailored CV** is checked against the candidate's CV and nothing
+        else - `company_context` is deliberately not passed, so a company fact
+        can never become a CV bullet.
+
+        The **cover letter** is checked sentence by sentence (so one bad
+        sentence is reported precisely) and may additionally cite the verified
+        company brief - but only for statements that are about the company.
+        `is_candidate_claim` decides which, and it defaults to the strict
+        candidate domain whenever the subject is not clearly the employer.
         """
-        claims = [*draft.bullets, *split_sentences(draft.cover_letter)]
-        result = check_grounding(claims, cv, context_terms=(job.company, job.role))
+        cv_result = check_grounding(
+            draft.bullets, cv, context_terms=(job.company, job.role)
+        )
+        letter_result = check_grounding(
+            letter_claims(draft.cover_letter),
+            cv,
+            context_terms=(job.company, job.role),
+            company_context=build_company_context(brief),
+            company_name=job.company,
+        )
+        result = GroundingResult(
+            grounded=[*cv_result.grounded, *letter_result.grounded],
+            issues=[*cv_result.issues, *letter_result.issues],
+        )
 
         if self.verify_with_model and result.grounded:
             result = apply_verdicts(result, self._verify(result.grounded, cv))

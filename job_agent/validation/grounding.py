@@ -63,6 +63,26 @@ _NUMBER_WORDS = {
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-_]*")
 _DIGITS = re.compile(r"\d+")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_BRACKETED = re.compile(r"\[([^\]]{1,60})\]")
+
+# Signals used to decide whose claim a sentence is making. Kept narrow and
+# readable rather than clever - this is the rule an evaluator will ask about.
+_FIRST_PERSON = re.compile(r"\b(i|i'm|i've|my|mine|me)\b", re.IGNORECASE)
+_EXPERIENCE = re.compile(
+    r"\b(experience[ds]?|expertise|skill(s|ed)?|proficien\w+|familiar(ity)?|"
+    r"background|knowledge|worked|working|built|building|develop(ed|ing)|"
+    r"deliver(ed|ing)|implement(ed|ing)|creat(ed|ing)|design(ed|ing)|"
+    r"achiev(ed|ement|ements)|improv(ed|ement|ements)|led|manag(ed|ing)|"
+    r"mentor(ed|ing)|manag\w*|year|years|certified|certification[s]?|degree|"
+    r"studied|graduated|qualification[s]?)\b",
+    re.IGNORECASE,
+)
+_COMPANY_REFERENCE = re.compile(
+    r"\b(your|their|the)\s+(company|team|organisation|organization|work|"
+    r"mission|product[s]?|client[s]?|engineer[s]?|employee[s]?)\b|"
+    r"\byour\b|\bthe company\b",
+    re.IGNORECASE,
+)
 
 
 class GroundingIssue(BaseModel):
@@ -176,13 +196,92 @@ def distinctive_terms(claim: str) -> list[str]:
             continue
         if stripped[0].isupper() or looks_technical:
             terms.append(stripped)
+
+    # Anything in square brackets is a template placeholder - "[Candidate]",
+    # "[Your Name]" - and is flagged wherever it appears, including as the only
+    # word on a signature line, where the sentence-initial rule would otherwise
+    # let it through.
+    for placeholder in _BRACKETED.findall(claim):
+        terms.extend(
+            token
+            for token in _WORD.findall(placeholder)
+            if token.lower() not in _COMMON_WORDS
+        )
     return terms
+
+
+def is_candidate_claim(
+    claim: str,
+    company_name: str = "",
+    context_terms: tuple[str, ...] | list[str] = (),
+) -> bool:
+    """Whether `claim` asserts something about the *candidate*.
+
+    This is the hinge of the two-domain rule. A claim about the candidate may
+    only draw on the CV; a statement about the company may also draw on the
+    verified company brief. Getting this wrong in the permissive direction is
+    how "Arbisoft uses Django" would turn into "I have Django experience", so
+    the default is deliberately strict:
+
+    - first person plus an experience word ("I have experience...", "my
+      skills...", "I built...") -> candidate claim, CV only. This wins even
+      when the company is also named, so a mixed sentence is checked strictly.
+    - otherwise, if the claim is *about* the company - naming it, or saying
+      "your company", "the team" - it is a company statement.
+    - anything else falls back to candidate, so a bare "Built data platforms."
+      cannot quietly borrow a company fact.
+    """
+    if _FIRST_PERSON.search(claim) and _EXPERIENCE.search(claim):
+        return True
+    return not refers_to_company(claim, company_name, context_terms)
+
+
+def refers_to_company(
+    claim: str,
+    company_name: str = "",
+    context_terms: tuple[str, ...] | list[str] = (),
+) -> bool:
+    """Whether the claim's subject is the employer rather than the candidate.
+
+    Naming the employer or the advertised role counts, which is what lets a
+    letter say "I am applying for the X role at Y" without that being read as a
+    claim of experience.
+    """
+    if _COMPANY_REFERENCE.search(claim):
+        return True
+    lowered = claim.lower()
+    for name in (company_name, *context_terms):
+        name = name.strip().lower()
+        if not name:
+            continue
+        if name in lowered:
+            return True
+        head = name.split()[0]
+        if len(head) > 2 and head in lowered:
+            return True
+    return False
+
+
+def build_company_context(brief) -> str:
+    """The verified company material a letter may cite.
+
+    Only what already survived the research agent's own grounding: the brief's
+    summary and facts, each of which had to cite a retrieved result, plus the
+    source titles. Nothing here can ever support a claim about the candidate.
+    """
+    if brief is None:
+        return ""
+    return "\n".join(
+        [brief.company, brief.summary, *brief.facts, *(s.title for s in brief.sources)]
+    )
 
 
 def check_grounding(
     claims: list[str],
     source_cv: ParsedCV,
     context_terms: tuple[str, ...] | list[str] = (),
+    company_context: str = "",
+    company_name: str = "",
 ) -> GroundingResult:
     """Split `claims` into those supported by `source_cv` and those that are not.
 
@@ -195,6 +294,12 @@ def check_grounding(
     proper nouns - the company name and the role title - so a cover letter may
     address the company it is written to. It is never used for technologies or
     achievements.
+
+    `company_context` is the second evidence domain: verified company material
+    a *company statement* may cite. It is kept entirely separate from the CV
+    corpus and is never consulted for a claim about the candidate, so a company
+    fact can never become the candidate's experience. Leave it empty - as the
+    tailored CV does - and the check is exactly as strict as it has always been.
     """
     corpus = "\n".join(
         [
@@ -217,27 +322,58 @@ def check_grounding(
         for variant in (term.lower(), singular(term))
     }
 
+    company_lower = company_context.lower()
+    company_numbers = numbers_in(company_context)
+
     result = GroundingResult()
     for claim in claims:
+        # Which evidence domain this claim is allowed to draw on.
+        about_candidate = is_candidate_claim(claim, company_name, context_terms)
+        searchable = (
+            corpus_lower if about_candidate else f"{corpus_lower}\n{company_lower}"
+        )
+        known_numbers = (
+            corpus_numbers
+            if about_candidate
+            else corpus_numbers | company_numbers
+        )
+
+        # The employer's proper nouns are a naming allowance for statements
+        # about the employer - never evidence for a claim about the candidate.
+        # A role advertised as "Junior AI Engineer" must not make "my AI skills"
+        # supportable, any more than "Kubernetes Engineer" would license
+        # Kubernetes.
+        nameable = set() if about_candidate else allowed
+
         unsupported_terms = [
             term
             for term in distinctive_terms(claim)
-            if not is_term_supported(term, corpus_lower)
-            and term.lower() not in allowed
-            and singular(term) not in allowed
+            if not is_term_supported(term, searchable)
+            and term.lower() not in nameable
+            and singular(term) not in nameable
         ]
-        unsupported_numbers = sorted(numbers_in(claim) - corpus_numbers)
+        unsupported_numbers = sorted(numbers_in(claim) - known_numbers)
 
         if unsupported_terms:
-            result.issues.append(
-                GroundingIssue(
-                    claim=claim,
-                    reason=(
-                        "the CV never mentions "
-                        + ", ".join(dict.fromkeys(unsupported_terms))
-                    ),
+            # When the term exists in the company material but the claim is
+            # about the candidate, say so - it is the difference between "we
+            # never found this" and "this is true of them, not of you", and the
+            # retry needs to understand which.
+            borrowed = [
+                term
+                for term in unsupported_terms
+                if company_lower and is_term_supported(term, company_lower)
+            ]
+            named = ", ".join(dict.fromkeys(unsupported_terms))
+            reason = f"the CV never mentions {named}"
+            if borrowed:
+                reason += (
+                    " - "
+                    + ", ".join(dict.fromkeys(borrowed))
+                    + " is something the company does, not something the CV "
+                    "claims about the candidate"
                 )
-            )
+            result.issues.append(GroundingIssue(claim=claim, reason=reason))
         elif unsupported_numbers:
             result.issues.append(
                 GroundingIssue(
