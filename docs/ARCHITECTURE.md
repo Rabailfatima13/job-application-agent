@@ -210,6 +210,45 @@ job search. The query is now `"<company>" company overview`, role relevance is a
 the summariser prompt instead, and a relevance guard discards any result that never
 mentions the company before the summariser sees it.
 
+### D13 — The MCP server is an adapter, not a second implementation
+
+`mcp_server/server.py` exposes `applications://all` plus five tools, each one a thin
+call into `SQLiteApplicationTracker`, `ApplicationRecord` and `WebSearchClient`. No
+business rule is restated, so the MCP surface cannot drift from the pipeline: the same
+Pydantic model validates a record, the same status enum applies, the same database file
+is read. `ApplicationTracker` being a four-method interface is what makes this possible
+without the server knowing where rows live (NFR-9).
+
+`score_fit` and `tailor_application` complete FR-8's "research/tailoring tools" half.
+Both parse their inputs with the pipeline's own parsers and then hand structured objects
+to `ScoringAgent` / `WritingAgent`, so the rubric and the no-fabrication guard are the
+agents' own code — the MCP layer adds no judgement of its own. `tailor_application`
+returns the tailored CV *and* the cover letter because they are one model call here;
+two tools would double the cost or force the server to hold state between calls.
+
+**Model tier is opt-in, not opt-out.** An MCP call is made by a client the operator may
+not be watching, so the model-backed tools run on the *light* tier by default — the
+substitution is applied to a copy of the settings, leaving pipeline routing untouched.
+`MCP_MODEL_TIER=heavy` selects the configured heavy provider, and nothing else does.
+
+**No company context over MCP.** `tailor_application` passes `brief=None`, so the letter
+is grounded in the CV alone. Accepting caller-supplied "company facts" would let an MCP
+client introduce material this server cannot verify.
+
+Two further constraints:
+
+- **Nothing can auto-submit.** `set_application_status` records a decision a human has
+  already made (FR-14); the server never sends an application anywhere.
+- **Errors carry no credentials.** A failed search reports its HTTP status only — httpx
+  puts the full request URL in its message, and SerpAPI carries the key as a query
+  parameter, so the raw message would have leaked the credential into MCP error
+  responses and the trace log.
+
+Errors surface as protocol errors carrying a plain message — an unknown application, an
+unknown status (which lists the valid ones), an out-of-range score from the shared
+model. No message contains a configuration value; a missing search key is reported by
+naming `SEARCH_API_KEY`, never its contents.
+
 ### D10 — A failed rewrite costs the documents, not the run
 
 If the writer cannot produce grounded material within its attempt budget it raises

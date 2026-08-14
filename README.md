@@ -96,7 +96,7 @@ separate layer from schema validation.
 | `job_agent/memory/` | Persistent application tracker + per-run session context |
 | `job_agent/validation/` | Schema guard with bounded retry (no-fabrication grounding: Week 7) |
 | `job_agent/observability/` | Trace events per tool/model call with latency and token counts |
-| `job_agent/mcp_server/` | Custom MCP server exposing the tracker resource and tools (Week 7) |
+| `job_agent/mcp_server/` | Custom MCP server exposing the tracker as a resource plus tracker/search tools |
 | `job_agent/app/` | Streamlit placeholder — shows configuration only, does not run the pipeline yet (Week 7) |
 | `tests/` | Unit tests per component + fixtures for the end-to-end run |
 
@@ -151,6 +151,58 @@ print(context.warnings, context.trace.totals())
 
 Both arguments accept raw text or a path to a `.pdf`, `.txt` or `.md` file.
 
+## Using the tracker over MCP
+
+The application pipeline is exposed over the Model Context Protocol, so another
+client — Claude Code, an IDE, a colleague's script — can read and update it without
+importing this package (FR-8, NFR-9).
+
+```bash
+python -m job_agent.mcp_server.server
+```
+
+| Kind | Name | Does |
+| --- | --- | --- |
+| resource | `applications://all` | every tracked application, newest first, as JSON |
+| tool | `list_applications(status?)` | list, optionally filtered by status |
+| tool | `get_application(application_id)` | fetch one; errors if the id is unknown |
+| tool | `track_application(role, company, fit_score, status?)` | record a new application, `draft` by default |
+| tool | `set_application_status(application_id, status)` | move it along the pipeline |
+| tool | `search_company(query, max_results?)` | web search, returning `{title, url, snippet}` |
+| tool | `score_fit(cv, job_description)` | parses both and runs the scoring agent → fit report |
+| tool | `tailor_application(cv, job_description)` | the above plus the writing agent → fit report, tailored CV, cover letter |
+
+`cv` and `job_description` accept raw text or a path to a `.txt`/`.md`/`.pdf` file.
+
+> **The last two tools cost model quota** — three and four calls respectively, plus a
+> retry per malformed or ungrounded response. They run on the **light** tier by default,
+> whatever that is configured to be, so an MCP call never quietly bills the expensive
+> provider. `MCP_MODEL_TIER=heavy` opts in.
+
+`tailor_application` is one tool rather than two because tailoring the CV and drafting
+the letter are a single model call here; splitting them would double the cost or force
+the server to hold state. The no-fabrication guarantee applies unchanged — the tailored
+CV is checked against the candidate's CV alone, and no company research is performed, so
+an MCP caller cannot inject unverified "company facts".
+
+To register it with Claude Code, add to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "job-application-agent": {
+      "command": "python",
+      "args": ["-m", "job_agent.mcp_server.server"],
+      "cwd": "/absolute/path/to/job-application-agent"
+    }
+  }
+}
+```
+
+The server reads `TRACKER_DB_PATH` and the search settings from the same `.env` the
+pipeline uses. It returns no configuration values, and it cannot submit an application
+anywhere — status changes only ever record a decision a human has already made.
+
 ## Where data is stored
 
 | What | Where | Committed? |
@@ -197,7 +249,7 @@ python -m pytest --cov=job_agent --cov-report=term-missing
 - ✅ Supervisor integration: optional `write_application` stage
 - ✅ Company-oriented research query plus a relevance guard on search results
 - ✅ Verified end to end against live models and live web search
-- ⬜ Custom MCP server
+- ✅ Custom MCP server — tracker as a resource, tracker/search operations as tools
 - ⬜ Multi-model routing comparison
 - ⬜ Additional LangGraph branches (fit threshold, next-role loop)
 - ⬜ Streamlit UI and a user-facing runner
