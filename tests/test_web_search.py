@@ -118,6 +118,129 @@ def test_a_provider_error_surfaces_as_a_search_error():
         client.search("Arbisoft")
 
 
+def test_a_failed_request_never_reports_the_api_key():
+    # httpx puts the whole request URL in its message, and SerpAPI carries the
+    # key as a query parameter - so the raw message would leak the credential
+    # into error responses, MCP tool errors and the trace log.
+    import httpx
+
+    from job_agent.tools.web_search import _http_get
+
+    request = httpx.Request(
+        "GET",
+        "https://serpapi.com/search.json",
+        params={"engine": "google", "q": "x", "api_key": "SUPER-SECRET-KEY"},
+    )
+    response = httpx.Response(401, request=request)
+
+    def raise_status(*_args, **_kwargs):
+        response.raise_for_status()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx, "get", raise_status)
+        with pytest.raises(SearchError) as exc:
+            _http_get(
+                "https://serpapi.com/search.json",
+                {"api_key": "SUPER-SECRET-KEY"},
+                {},
+            )
+
+    message = str(exc.value)
+    assert "SUPER-SECRET-KEY" not in message
+    assert "api_key" not in message
+    assert "401" in message  # the useful part survives
+
+
+def test_httpx_request_logging_is_silenced_so_urls_never_reach_logs():
+    # A live MCP run printed a real SerpAPI key: httpx logs every request URL at
+    # INFO, and SerpAPI carries the credential as a query parameter, so the log
+    # line contained the key. The MCP SDK enables INFO logging, so it went
+    # straight to the server's stderr.
+    import logging
+
+    import job_agent.tools.web_search  # noqa: F401  (import applies the setting)
+
+    assert logging.getLogger("httpx").level >= logging.WARNING
+
+
+def test_the_httpx_logger_stays_quiet_even_when_the_root_logger_is_verbose(caplog):
+    import logging
+
+    import httpx
+
+    from job_agent.tools.web_search import _http_get
+
+    request = httpx.Request(
+        "GET",
+        "https://serpapi.com/search.json",
+        params={"api_key": "SUPER-SECRET-KEY"},
+    )
+    response = httpx.Response(401, request=request)
+
+    with caplog.at_level(logging.DEBUG):  # as verbose as a host could get
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(httpx, "get", lambda *a, **k: response.raise_for_status())
+            with pytest.raises(SearchError):
+                _http_get(
+                    "https://serpapi.com/search.json",
+                    {"api_key": "SUPER-SECRET-KEY"},
+                    {},
+                )
+
+    assert "SUPER-SECRET-KEY" not in caplog.text
+
+
+def test_a_failed_search_writes_no_credential_into_the_trace_log(tmp_path):
+    # Tool failures are recorded as trace events, and the collector mirrors
+    # them to a file on disk. Whatever the search error says ends up there, so
+    # it must not say the key.
+    import httpx
+
+    from job_agent.observability import TraceCollector, traced_tool_call
+    from job_agent.tools.web_search import _http_get
+
+    log_path = tmp_path / "tool_calls.log"
+    collector = TraceCollector(log_path=log_path)
+    request = httpx.Request(
+        "GET",
+        "https://serpapi.com/search.json",
+        params={"api_key": "SUPER-SECRET-KEY"},
+    )
+    response = httpx.Response(401, request=request)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx, "get", lambda *a, **k: response.raise_for_status())
+        with pytest.raises(SearchError):
+            with traced_tool_call(collector, "research", "web_search", {"q": "x"}):
+                _http_get(
+                    "https://serpapi.com/search.json",
+                    {"api_key": "SUPER-SECRET-KEY"},
+                    {},
+                )
+
+    written = log_path.read_text(encoding="utf-8")
+    assert "SUPER-SECRET-KEY" not in written
+    assert "api_key" not in written
+    assert '"status": "error"' in written  # the failure is still recorded
+
+
+def test_a_transport_failure_also_reports_nothing_sensitive():
+    import httpx
+
+    from job_agent.tools.web_search import _http_get
+
+    def boom(*_args, **_kwargs):
+        raise httpx.ConnectError("failed to connect to https://serpapi.com?api_key=SECRET")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx, "get", boom)
+        with pytest.raises(SearchError) as exc:
+            _http_get("https://serpapi.com/search.json", {"api_key": "SECRET"}, {})
+
+    assert "SECRET" not in str(exc.value)
+    assert "ConnectError" in str(exc.value)
+
+
 def test_an_unexpected_payload_is_rejected():
     client = WebSearchClient(
         "serpapi", api_key="k", request_fn=RecordingRequest(payload="<html>")

@@ -14,6 +14,7 @@ The HTTP call itself is injected (`request_fn`), so tests exercise the real
 query-building and parsing without a key or a network.
 """
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -36,6 +37,15 @@ DEFAULT_MAX_RESULTS = 5
 MAX_SNIPPET_CHARS = 500
 
 RequestFn = Callable[[str, dict, dict], dict]
+
+# httpx logs every request at INFO, and the log line contains the full URL.
+# SerpAPI takes its credential as a query parameter, so that one line prints the
+# API key wherever the host sends INFO logs - which, when this package runs as
+# an MCP server, means the server's stderr and therefore the client's logs. A
+# live run leaked a real key exactly this way. Nothing here needs httpx's
+# request log, so it is silenced at import; anything logged at WARNING or above
+# still comes through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class SearchError(RuntimeError):
@@ -68,8 +78,19 @@ def _http_get(url: str, params: dict, headers: dict) -> dict:
         response = httpx.get(url, params=params, headers=headers, timeout=10.0)
         response.raise_for_status()
         return response.json()
+    except httpx.HTTPStatusError as exc:
+        # Deliberately not `{exc}`: httpx puts the full request URL in its
+        # message, and for SerpAPI the key travels as a query parameter - so
+        # the raw message carries the credential into error responses, MCP
+        # tool errors and the trace log. Only the status code is reported, and
+        # `from None` keeps the URL-bearing original out of the traceback.
+        raise SearchError(
+            f"Web search request failed with HTTP {exc.response.status_code}."
+        ) from None
     except httpx.HTTPError as exc:
-        raise SearchError(f"Web search request failed: {exc}") from exc
+        raise SearchError(
+            f"Web search request failed ({type(exc).__name__})."
+        ) from None
 
 
 def _serpapi_request(
