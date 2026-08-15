@@ -159,16 +159,54 @@ def singular(term: str) -> str:
     return lowered[:-1]  # APIs -> api, clusters -> cluster
 
 
+# Standard academic degree abbreviations: a CV that says "BS" and generated
+# text that says "Bachelor's" (or the reverse) are the same claim - a live run
+# rejected exactly this ("the CV never mentions Bachelor" when the CV said "BS
+# Data Science student"). Not a general synonym system: a small, closed list
+# for one common CV-specific case, the same kind of narrow exception
+# `_NUMBER_WORDS` already makes for spelled-out digits. Periods are stripped
+# before comparing ("B.S." and "BS" are the same claim), and matching stays
+# whole-word: "ms"/"bs" are short enough to appear inside unrelated words
+# ("months", "jobs") or names ("MS" as in Microsoft), so - unlike the rest of
+# this module - a plain substring check would be unsafe here.
+_DEGREE_EQUIVALENTS: list[set[str]] = [
+    {"bachelor", "bachelors", "bs", "bsc", "ba"},
+    {"master", "masters", "ms", "msc", "ma"},
+]
+
+
+def _has_degree_abbreviation(term: str, corpus_lower: str) -> bool:
+    """Whether a conventional abbreviation or spelled-out form of the degree
+    `term` names appears in the corpus. None of this fires for anything that
+    is not literally one of the words in `_DEGREE_EQUIVALENTS` - a
+    candidate's actual degree level still has to appear somewhere; this only
+    stops the exact wording of it from being treated as a fabrication.
+    """
+    lowered = term.lower().replace(".", "")
+    group = next((g for g in _DEGREE_EQUIVALENTS if lowered in g), None)
+    if group is None:
+        return False
+    corpus_no_dots = corpus_lower.replace(".", "")
+    return any(
+        re.search(rf"\b{re.escape(variant)}\b", corpus_no_dots) for variant in group
+    )
+
+
 def is_term_supported(term: str, corpus_lower: str) -> bool:
     """Whether `term` appears in the CV, allowing a plural/singular difference.
 
     Matching stays substring-based, as it always was, so a term is still found
-    inside a longer word ("SQL" within "SQLAlchemy"). The singular form is only
-    an *additional* way to match, never a replacement - this widens what counts
-    as supported by exactly one thing: the plural `s`.
+    inside a longer word ("SQL" within "SQLAlchemy"). The singular form and the
+    degree-abbreviation check are only *additional* ways to match, never a
+    replacement - together they widen what counts as supported by exactly two
+    things: the plural `s`, and a handful of standard degree abbreviations.
     """
     lowered = term.lower()
-    return lowered in corpus_lower or singular(term) in corpus_lower
+    return (
+        lowered in corpus_lower
+        or singular(term) in corpus_lower
+        or _has_degree_abbreviation(term, corpus_lower)
+    )
 
 
 def distinctive_terms(claim: str) -> list[str]:
@@ -210,6 +248,39 @@ def distinctive_terms(claim: str) -> list[str]:
     return terms
 
 
+# How many characters may separate a first-person pronoun from an experience
+# word and still count as the same clause ("I have built Django services" -
+# a handful of words apart). Any further apart and the words in between are
+# almost always a different clause - found live: "I am excited to apply for
+# the Data Science Intern role at Nexora Analytics, a finance and operations
+# intelligence platform built for multi-unit restaurant operators" was forced
+# into the strict candidate-only domain because the sentence contains "I" and,
+# far later, "built" - which describes the COMPANY's platform, not the
+# candidate. Not a parse of clause structure (nothing else in this module
+# does real parsing either) - a deliberately simple proximity heuristic wide
+# enough for a genuine candidate sentence and narrow enough to exclude a full
+# company-descriptor clause sitting between the pronoun and the verb.
+_EXPERIENCE_PROXIMITY_CHARS = 40
+
+
+def _first_person_experience_claim(claim: str) -> bool:
+    """True only when a first-person pronoun and an experience word are close
+    enough together to plausibly be the candidate's own clause - not merely
+    both present somewhere in the same sentence. Reuses `_FIRST_PERSON` and
+    `_EXPERIENCE` exactly as `is_candidate_claim` always has; this only adds a
+    distance check between where each one matches.
+    """
+    pronoun_positions = [m.start() for m in _FIRST_PERSON.finditer(claim)]
+    if not pronoun_positions:
+        return False
+    experience_positions = [m.start() for m in _EXPERIENCE.finditer(claim)]
+    return any(
+        abs(pronoun - experience) <= _EXPERIENCE_PROXIMITY_CHARS
+        for pronoun in pronoun_positions
+        for experience in experience_positions
+    )
+
+
 def is_candidate_claim(
     claim: str,
     company_name: str = "",
@@ -223,15 +294,20 @@ def is_candidate_claim(
     how "Arbisoft uses Django" would turn into "I have Django experience", so
     the default is deliberately strict:
 
-    - first person plus an experience word ("I have experience...", "my
-      skills...", "I built...") -> candidate claim, CV only. This wins even
-      when the company is also named, so a mixed sentence is checked strictly.
+    - first person plus a *nearby* experience word ("I have experience...",
+      "my skills...", "I built...") -> candidate claim, CV only. This wins
+      even when the company is also named, so "Arbisoft uses Django, and I
+      have built Django services" is still checked strictly - the pronoun and
+      the verb are a handful of words apart. It does not fire on a first
+      person pronoun and an experience word that merely occur somewhere in
+      the same sentence with a company-descriptor clause between them; see
+      `_first_person_experience_claim`.
     - otherwise, if the claim is *about* the company - naming it, or saying
       "your company", "the team" - it is a company statement.
     - anything else falls back to candidate, so a bare "Built data platforms."
       cannot quietly borrow a company fact.
     """
-    if _FIRST_PERSON.search(claim) and _EXPERIENCE.search(claim):
+    if _first_person_experience_claim(claim):
         return True
     return not refers_to_company(claim, company_name, context_terms)
 

@@ -57,7 +57,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         heavy=ModelConfig(
             provider=os.getenv("HEAVY_PROVIDER", "anthropic"),
             model=os.getenv("HEAVY_MODEL", "claude-sonnet-5"),
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            # HEAVY_API_KEY lets the heavy tier move to any OpenAI-compatible
+            # provider (e.g. Gemini); ANTHROPIC_API_KEY is the fallback so an
+            # existing anthropic-provider .env keeps working unchanged.
+            api_key=os.getenv("HEAVY_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
+            base_url=os.getenv("HEAVY_BASE_URL"),
         ),
         light=ModelConfig(
             provider=os.getenv("LIGHT_PROVIDER", "openai_compatible"),

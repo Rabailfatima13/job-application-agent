@@ -5,8 +5,10 @@ it as a subprocess and talk to it over stdio exactly as Claude Code or any
 other MCP client would. That is the part FR-8 actually promises: another client
 can discover and use the tracker without importing this package.
 
-The subprocess is pointed at a tmp_path database via TRACKER_DB_PATH, so no
-real tracker is touched, and nothing here needs an API key or a network.
+The subprocess is pointed at a tmp_path database via TRACKER_DB_PATH and a
+tmp_path trace log via TOOL_CALL_LOG_PATH, so no real tracker or the real
+data/tool_calls.log is touched, and nothing here needs an API key or a
+network.
 """
 
 import asyncio
@@ -35,7 +37,11 @@ def run_session(db_path: Path, work):
             command=sys.executable,
             args=["-m", "job_agent.mcp_server.server"],
             cwd=str(REPO_ROOT),
-            env={**os.environ, "TRACKER_DB_PATH": str(db_path)},
+            env={
+                **os.environ,
+                "TRACKER_DB_PATH": str(db_path),
+                "TOOL_CALL_LOG_PATH": str(db_path.parent / "tool_calls.log"),
+            },
         )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
@@ -65,6 +71,7 @@ def run_session_without_credentials(db_path: Path, work):
             env={
                 **stripped,
                 "TRACKER_DB_PATH": str(db_path),
+                "TOOL_CALL_LOG_PATH": str(db_path.parent / "tool_calls.log"),
                 # An unknown provider fails when the client is built, before a
                 # socket is ever opened - instant, and impossible to bill.
                 # (Pointing at an unreachable URL instead would work, but the

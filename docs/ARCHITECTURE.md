@@ -66,25 +66,59 @@ Week 5 version could not.
 
 **D6 — The model judges, the code scores.**
 `overall_fit` is never asked of the LLM. The scoring agent asks it one narrow
-question per requirement — met or not, and *which* CV evidence shows it — and
-`compute_fit_score` turns those answers into a number:
+question per requirement — how well the CV evidence supports it, and *which*
+evidence shows that — and `compute_fit_score` turns those answers into a number.
+
+Each judgement is a `match_level` (`MatchLevel`, `models/outputs.py`): `match`,
+`partial`, `related` or `missing`, not a binary met/unmet. `match_level` is the
+authoritative classification of the requirement. `RequirementMatch.met` is a
+plain derived convenience (`match_level == MATCH`) kept for any caller that
+only ever needed yes/no — it is set alongside `match_level`, never
+independently, so the two can never disagree. `reason` is the one-sentence,
+human-facing explanation of *why* the model chose that level.
+
+`compute_fit_score` (`agents/scoring.py`) turns each judgement into a weight:
 
 ```
-overall_fit = weight of met requirements / weight of all requirements
-              must-have = 1.0, nice-to-have = 0.5
+overall_fit = (sum of requirement_weight × match_strength) / (sum of requirement_weight)
+              requirement_weight: must-have = 1.0, nice-to-have = 0.5
+              match_strength:     match = 1.0, partial = 0.5, related = 0.25, missing = 0.0
 ```
 
-Equal-weight postings reduce to "3 of 5 met = 0.6", which is explainable in one
-sentence at the final presentation and testable without a model. Only
-`requirements` are scored; `responsibilities` are not sent to the model at all.
+PARTIAL and RELATED are evidence categories, not degrees of missing — a CV
+that shows the same skill at a lower proficiency, or genuinely adjacent
+evidence, earns part of a requirement's weight rather than none, because that
+is a materially different situation from the CV never touching the subject at
+all. (See the `MatchLevel` docstring for the live-run case this replaced: "BS
+Data Science student" and pure silence on a requirement were both being scored
+as the same "unmet".) Equal-weight postings judged only match/missing still
+reduce to the original "3 of 5 met = 0.6" arithmetic — the four levels are a
+strict widening of the same rubric, explainable in one sentence and testable
+without a model, not a different one. Only `requirements` are scored;
+`responsibilities` are not sent to the model at all.
+
+**Gaps.** `FitReport.gaps` (`ScoringAgent.score`, `agents/scoring.py`) lists
+every requirement whose match strength is exactly 0.0 — i.e. `match_level ==
+MISSING` — must-haves first. A partial or related match is real evidence at a
+different strength, not a gap: it is reported in the fit report as what it is,
+never folded into the missing list.
+
+**What the model must not do.** `SCORING_SYSTEM_PROMPT` tells the model to
+judge subject relevance before proficiency, and never to infer a skill from a
+field of study, a job title, or what would be "plausible" for a candidate like
+this one — only from evidence actually written down. This is enforced twice:
+the model is instructed not to do it, and `_resolve_matches` discards any
+judgement whose `evidence_index` does not point at a real, existing piece of
+`ParsedCV.evidence`, regardless of which level was claimed, downgrading it to
+`missing`. A model cannot earn score by citing evidence that is not real.
 
 **D7 — The model points at evidence, it does not write it.**
 Judgements carry an *index* into `ParsedCV.evidence`, and the code looks up the
 wording. There is no free-text evidence field in what the model returns, so an
 invented claim has nowhere to go; an index pointing at nothing downgrades the
-match to unmet and is recorded in the trace. This is the Week 6 form of the
+match to missing and is recorded in the trace. This is the Week 6 form of the
 project's trust requirement — the full grounding check on *generated* text is
-still Week 7.
+the writing agent's job, covered under Week 7 below.
 
 ## The Week 6 pipeline (complete)
 
@@ -117,7 +151,7 @@ auto-submitted.
 tracker. It never constructs a database. `build_supervisor(settings)` is the single
 place that knows production means SQLite plus a real search client.
 
-## Week 7 (in progress): grounding and the writing agent
+## Week 7 (complete): grounding and the writing agent
 
 The pipeline gains one optional stage, between scoring and tracking:
 

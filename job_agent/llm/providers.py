@@ -14,6 +14,54 @@ import json
 from ..config import ModelConfig
 from .base import ChatResult, ToolCall
 
+# Every prompt in this project asks for "a single JSON object and nothing
+# else" and every reply goes straight into `parse_structured` - so an
+# OpenAI-compatible call is never asking for open-ended prose. Pinning a
+# deterministic, near-zero temperature is the appropriate setting for that:
+# it does not replace validation, it just makes the model's own generation
+# steadier so what it emits is closer to the single JSON object being asked
+# for in the first place.
+JSON_MODE_TEMPERATURE = 0.0
+
+
+def _json_validate_failure_text(exc) -> str | None:
+    """The provider's own malformed generation, if `exc` is specifically a
+    json_object-mode rejection carrying one - `None` for anything else,
+    meaning the caller should re-raise `exc` unchanged.
+
+    Some OpenAI-compatible providers (Groq, observed live) validate JSON
+    mode server-side and reject a malformed generation as an HTTP 400
+    instead of returning it as an ordinary reply. Before `response_format`
+    was added, that same malformed text came back as a normal 200 and
+    `parse_structured`/`generate_validated` judged it - rejecting it,
+    retrying with feedback, or accepting it. An exception raised out of
+    `complete()` skips all of that, so this recovers the text rather than
+    letting the provider's own opinion of validity replace ours. It performs
+    no validation or repair itself: a schema-shaped string comes back, or
+    nothing does.
+
+    Deliberately narrow: only the exact `json_validate_failed` code with a
+    string `failed_generation` is recovered. Anything else - a differently
+    shaped 400, a missing or non-string field - is a real error this adapter
+    has no basis for hiding, so the caller re-raises it untouched.
+
+    `exc.body` is already the *inner* error object, not the raw response
+    envelope: the SDK's own `_make_status_error` unwraps
+    `{"error": {...}}` to `{...}` before attaching it to the exception
+    (`openai/_client.py`: `data = body.get("error", body)`), and it is that
+    unwrapped `data` the exception is constructed with - confirmed by
+    reading the installed SDK source after a live run raised this and the
+    first version of this function (which re-read the now-absent "error"
+    key) missed it and re-raised instead of recovering.
+    """
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return None
+    if body.get("code") != "json_validate_failed":
+        return None
+    failed_generation = body.get("failed_generation")
+    return failed_generation if isinstance(failed_generation, str) else None
+
 
 def _tool_specs_anthropic(tools) -> list[dict]:
     return [
@@ -104,7 +152,14 @@ class OpenAICompatibleClient:
         from openai import OpenAI  # imported lazily so tests need no SDK
 
         if not config.base_url:
-            raise RuntimeError("LIGHT_BASE_URL is not set (see .env.example).")
+            # This adapter serves either tier, so the missing setting is
+            # whichever of HEAVY_BASE_URL / LIGHT_BASE_URL configures the
+            # tier being built - naming only one would send a heavy-tier user
+            # debugging the wrong variable.
+            raise RuntimeError(
+                "base_url is not set for the openai_compatible provider "
+                "(see HEAVY_BASE_URL / LIGHT_BASE_URL in .env.example)."
+            )
         self.name = f"openai_compatible:{config.model}"
         self.model = config.model
         # Local runtimes such as Ollama ignore the key but the SDK requires one.
@@ -119,6 +174,8 @@ class OpenAICompatibleClient:
         tools: list | None = None,
         max_tokens: int = 1024,
     ) -> ChatResult:
+        from openai import BadRequestError  # imported lazily so tests need no SDK
+
         converted: list[dict] = [{"role": "system", "content": system}]
         for message in messages:
             if message["role"] == "tool_results":
@@ -133,12 +190,34 @@ class OpenAICompatibleClient:
             else:
                 converted.append(message)
 
-        response = self._client.chat.completions.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            messages=converted,
-            **({"tools": _tool_specs_openai(tools)} if tools else {}),
-        )
+        # `response_format={"type": "json_object"}` is the OpenAI "JSON mode"
+        # contract: it constrains the provider's own decoding to syntactically
+        # valid JSON, rather than relying on the prompt alone to produce it.
+        # Google's Gemini OpenAI-compatibility layer documents support for it
+        # in real-time (non-batch) calls, which is what this client makes.
+        # Skipped when tools are supplied - forced JSON output and
+        # function-calling are not meant to be combined, and every call in
+        # this codebase today passes `tools=None` regardless.
+        json_mode = {} if tools else {"response_format": {"type": "json_object"}}
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=JSON_MODE_TEMPERATURE,
+                messages=converted,
+                **({"tools": _tool_specs_openai(tools)} if tools else {}),
+                **json_mode,
+            )
+        except BadRequestError as exc:
+            text = _json_validate_failure_text(exc)
+            if text is None:
+                raise
+            # No `response` object exists to read usage off - the request
+            # was rejected before one came back - so token counts are simply
+            # unavailable here, exactly as `ChatResult`'s defaults already say.
+            return ChatResult(text=text, model=self.model)
+
         message = response.choices[0].message
         calls = [
             ToolCall(

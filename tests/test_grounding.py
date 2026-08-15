@@ -571,3 +571,211 @@ def test_feedback_lists_every_violation_with_its_reason(cv):
     assert "Kubernetes" in feedback
     assert "9" in feedback
     assert feedback.count("->") == 2
+
+
+# --- Regression: two false rejections from a real live run -------------------
+#
+# A live run against a real CV (a BS Data Science student applying to a
+# "Data Science Intern" role at "Nexora Analytics") scored 10% and produced no
+# tailored documents: every grounding attempt was rejected, and the trace
+# showed two distinct false positives rather than genuine fabrications. Both
+# are reproduced here with the exact sentences the writer actually generated.
+
+
+@pytest.fixture
+def data_science_cv() -> ParsedCV:
+    """The relevant slice of the real CV from the live run - "BS", not the
+    spelled-out "Bachelor's" the writer used."""
+    evidence = (
+        "Motivated 20-year-old BS Data Science student at the National "
+        "University of Computer and Emerging Sciences."
+    )
+    return ParsedCV(
+        candidate_name="Rabail Fatima",
+        raw_text=evidence,
+        evidence=[CVEvidence(text=evidence, section="Education")],
+    )
+
+
+# Fix 1: degree abbreviations ---------------------------------------------
+
+
+def test_a_bs_degree_supports_a_bachelors_phrasing(data_science_cv):
+    # A: the exact live failure - "the CV never mentions Bachelor".
+    result = check(
+        "Currently pursuing a Bachelor's degree in Data Science at the "
+        "National University of Computer and Emerging Sciences.",
+        data_science_cv,
+    )
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_a_dotted_bs_abbreviation_supports_a_bachelors_phrasing():
+    cv = ParsedCV(
+        raw_text="B.S. Computer Science, National University.",
+        evidence=[CVEvidence(text="B.S. Computer Science, National University.")],
+    )
+
+    result = check("Bachelor's degree in Computer Science.", cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_degree_abbreviations_do_not_bleed_across_degree_levels(data_science_cv):
+    # The CV says BS (bachelor's) - a claim of a MASTER's must still fail.
+    # Proves the equivalence table is closed, not a general synonym system.
+    result = check(
+        "Currently pursuing a Master's degree in Data Science.", data_science_cv
+    )
+
+    assert not result.passed
+    assert "Master" in result.issues[0].reason
+
+
+def test_an_absent_degree_is_still_rejected():
+    # No degree of any kind on this CV - the abbreviation table must not
+    # manufacture support out of nothing. "Bachelor's" is not sentence-initial
+    # here, unlike a bare "Bachelor's degree..." claim, so it is actually
+    # checked (a sentence-initial capital carries no distinctive-term weight
+    # regardless of this fix - see `distinctive_terms`).
+    cv = ParsedCV(
+        raw_text="Built a FastAPI service.",
+        evidence=[CVEvidence(text="Built a FastAPI service.")],
+    )
+
+    result = check("Currently pursuing a Bachelor's degree in Computer Science.", cv)
+
+    assert not result.passed
+    assert "Bachelor" in result.issues[0].reason
+
+
+def test_unrelated_capitalised_terms_are_unaffected_by_the_degree_table(cv):
+    # The degree-abbreviation check must only ever fire for the exact words
+    # in _DEGREE_EQUIVALENTS - everything else keeps its normal strictness.
+    assert not check("Built production systems using Kubernetes.", cv).passed
+
+
+# Fix 2: a company-descriptor clause is not a candidate experience claim -----
+
+NEXORA_COMPANY_CONTEXT = (
+    "Nexora Analytics\n"
+    "Nexora Analytics is a finance and operations intelligence platform for "
+    "multi-unit restaurant operators and franchise brands, providing "
+    "real-time visibility into sales, labor, and inventory.\n"
+    "The company operates in the QSR analytics space, delivering "
+    "cutting-edge technology solutions.\n"
+)
+
+
+def nexora_check(claim: str, cv: ParsedCV) -> GroundingResult:
+    return check_grounding(
+        [claim],
+        cv,
+        context_terms=("Nexora Analytics", "Data Science Intern"),
+        company_context=NEXORA_COMPANY_CONTEXT,
+        company_name="Nexora Analytics",
+    )
+
+
+def test_a_company_description_clause_is_not_a_candidate_experience_claim(
+    data_science_cv,
+):
+    # B: the exact live failure - rejected as "the CV never mentions Intern,
+    # Nexora, Analytics", even though the rejection's own explanation said
+    # "Nexora, Analytics is something the company does, not something the CV
+    # claims about the candidate". "built" here describes Nexora Analytics'
+    # platform, not the candidate.
+    claim = (
+        "I am excited to apply for the Data Science Intern role at Nexora "
+        "Analytics, a finance and operations intelligence platform built for "
+        "multi-unit restaurant operators and franchise brands."
+    )
+
+    result = nexora_check(claim, data_science_cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_a_second_company_description_clause_from_the_same_run(data_science_cv):
+    # The second rejected sentence from the same live run - same bug
+    # ("delivering" instead of "built"), different wording.
+    claim = (
+        "I am particularly drawn to Nexora Analytics' focus on delivering "
+        "real-time visibility into sales, labor, and inventory."
+    )
+
+    result = nexora_check(claim, data_science_cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_genuine_unsupported_candidate_experience_is_still_rejected(data_science_cv):
+    # C: a real fabrication must still be caught - the fix narrows a false
+    # positive, it must not open a hole for a true one.
+    result = nexora_check("I built production ML systems.", data_science_cv)
+
+    assert not result.passed
+    assert "ML" in result.issues[0].reason
+
+
+def test_a_genuinely_close_candidate_claim_still_passes(data_science_cv):
+    result = nexora_check("I built a Python application.", data_science_cv)
+
+    # Not claimed anywhere on this CV, so still correctly rejected - this
+    # proves the proximity check narrows the *false positive*, not the check
+    # itself: "I built" stays close together and is still evaluated strictly.
+    assert not result.passed
+    assert "Python" in result.issues[0].reason
+
+
+def test_the_django_leak_protection_still_holds(cv):
+    # D: preserve the original protection this whole design exists for.
+    company_context = "Arbisoft\nArbisoft uses Django.\n"
+    result = check_grounding(
+        ["I have experience with Django."],
+        cv,
+        context_terms=("Arbisoft",),
+        company_context=company_context,
+        company_name="Arbisoft",
+    )
+
+    assert not result.passed
+    assert "Django" in result.issues[0].reason
+
+
+def test_a_mixed_sentence_naming_the_company_is_still_checked_strictly(cv):
+    # The proximity check must not reopen the hole the module's own docstring
+    # warns about: pronoun and experience word close together, company also
+    # named - still a candidate claim, still checked against the CV alone.
+    assert not company_check(
+        "Arbisoft uses Django, and I have built Django services.", cv
+    ).passed
+
+
+# --- Offline replay: the exact captured trace from the live run --------------
+
+
+def test_offline_replay_of_the_real_rejected_run(data_science_cv):
+    """Every claim `writing:grounding_guard` actually rejected in the live
+    run, replayed verbatim through the fixed checker - no live API call."""
+    claims = [
+        "Currently pursuing a Bachelor's degree in Data Science at the "
+        "National University of Computer and Emerging Sciences.",
+        "I am excited to apply for the Data Science Intern role at Nexora "
+        "Analytics, a finance and operations intelligence platform built for "
+        "multi-unit restaurant operators and franchise brands.",
+        "I am particularly drawn to Nexora Analytics' focus on delivering "
+        "real-time visibility into sales, labor, and inventory.",
+    ]
+
+    result = check_grounding(
+        claims,
+        data_science_cv,
+        context_terms=("Nexora Analytics", "Data Science Intern"),
+        company_context=NEXORA_COMPANY_CONTEXT,
+        company_name="Nexora Analytics",
+    )
+
+    assert result.passed, result.feedback()
+    assert len(result.grounded) == 3

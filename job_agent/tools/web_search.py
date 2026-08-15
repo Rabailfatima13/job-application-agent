@@ -91,6 +91,16 @@ def _http_get(url: str, params: dict, headers: dict) -> dict:
         raise SearchError(
             f"Web search request failed ({type(exc).__name__})."
         ) from None
+    except ValueError as exc:
+        # response.json() raises json.JSONDecodeError (a ValueError, not an
+        # httpx.HTTPError) when a 200 response body isn't valid JSON - e.g. a
+        # provider serving an HTML rate-limit or maintenance page. Uncaught,
+        # this would crash the whole pipeline run instead of degrading to a
+        # brief that says research was unavailable, same as any other search
+        # failure.
+        raise SearchError(
+            f"Web search response was not valid JSON ({type(exc).__name__})."
+        ) from None
 
 
 def _serpapi_request(

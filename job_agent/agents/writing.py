@@ -147,6 +147,12 @@ posting asks for it. Do not estimate years of experience. Do not invent \
 figures. If the candidate lacks something the role wants, say nothing about \
 it - the gaps are handled elsewhere.
 
+The evidence's own proficiency level is part of what is true, not something \
+to round up: if it says "basic knowledge", "an online course" or "currently \
+learning", say that - not "strong", "proficient" or "experienced". The \
+posting's wording is not a license to describe the candidate at the level it \
+asks for; only the evidence sets the level.
+
 bullets: 4-8 tailored CV lines, strongest first.
 cover_letter: 3-4 short paragraphs addressed to the company, drawing only on \
 the evidence, plus the company facts supplied. Do not claim knowledge of the \

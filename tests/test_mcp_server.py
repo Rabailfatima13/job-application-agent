@@ -4,8 +4,11 @@ These call the server's functions directly, which is the fast way to cover
 every branch. `test_mcp_protocol.py` covers the same surface through the real
 protocol.
 
-Every test points the server at a tmp_path database, so none of them can touch
-a real tracker.
+Every test points the server at a tmp_path database and a tmp_path trace log,
+so none of them can touch the real tracker or the real data/tool_calls.log -
+`server.py` builds its collector from the real `load_settings()`, so leaving
+TOOL_CALL_LOG_PATH unset here would otherwise have every run of this file
+write stub-driven noise into the project's real trace log.
 """
 
 import json
@@ -21,9 +24,10 @@ from job_agent.validation import RetryExhaustedError
 
 @pytest.fixture
 def db_path(tmp_path, monkeypatch):
-    """Point the server at a throwaway tracker database."""
+    """Point the server at a throwaway tracker database and trace log."""
     path = tmp_path / "applications.db"
     monkeypatch.setenv("TRACKER_DB_PATH", str(path))
+    monkeypatch.setenv("TOOL_CALL_LOG_PATH", str(tmp_path / "tool_calls.log"))
     return path
 
 
@@ -263,8 +267,8 @@ JD_EXTRACTION = {
 
 SCORING_JUDGEMENT = {
     "judgements": [
-        {"requirement_index": 0, "met": True, "evidence_index": 0},
-        {"requirement_index": 1, "met": False, "evidence_index": None},
+        {"requirement_index": 0, "match_level": "match", "evidence_index": 0},
+        {"requirement_index": 1, "match_level": "missing", "evidence_index": None},
     ],
     "recommended_emphasis": [0],
 }

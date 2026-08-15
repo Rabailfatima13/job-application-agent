@@ -241,6 +241,33 @@ def test_a_transport_failure_also_reports_nothing_sensitive():
     assert "ConnectError" in str(exc.value)
 
 
+def test_a_non_json_200_response_is_reported_as_a_search_error_not_a_crash():
+    # A provider can return HTTP 200 with a non-JSON body - an HTML rate-limit
+    # or maintenance page is a realistic case. response.json() raises
+    # json.JSONDecodeError there, which is a ValueError, not an httpx.HTTPError -
+    # uncaught, that would crash the whole pipeline run instead of degrading
+    # to a brief that says research was unavailable, the same as any other
+    # search failure.
+    import httpx
+
+    from job_agent.tools.web_search import _http_get
+
+    def html_response(*_args, **_kwargs):
+        return httpx.Response(
+            200,
+            text="<html>rate limited</html>",
+            request=httpx.Request("GET", "https://serpapi.com/search.json"),
+        )
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx, "get", html_response)
+        with pytest.raises(SearchError) as exc:
+            _http_get("https://serpapi.com/search.json", {"api_key": "SECRET"}, {})
+
+    assert "SECRET" not in str(exc.value)
+    assert "JSON" in str(exc.value)
+
+
 def test_an_unexpected_payload_is_rejected():
     client = WebSearchClient(
         "serpapi", api_key="k", request_fn=RecordingRequest(payload="<html>")

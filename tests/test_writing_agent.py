@@ -95,7 +95,7 @@ def report() -> FitReport:
         company="Arbisoft",
         overall_fit=0.8,
         requirement_matches=[
-            RequirementMatch(requirement="Strong Python", evidence=EVIDENCE[0], met=True)
+            RequirementMatch(requirement="Strong Python", evidence=EVIDENCE[0])
         ],
         gaps=["Kubernetes experience"],
         recommended_emphasis=[EVIDENCE[0], EVIDENCE[1]],

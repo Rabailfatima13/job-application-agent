@@ -13,7 +13,12 @@ def _fit_report(**overrides) -> dict:
         "company": "Arbisoft",
         "overall_fit": 0.8,
         "requirement_matches": [
-            {"requirement": "Python", "evidence": "Built a FastAPI service", "met": True}
+            {
+                "requirement": "Python",
+                "evidence": "Built a FastAPI service",
+                "match_level": "match",
+                "met": True,
+            }
         ],
         "gaps": ["No Kubernetes experience"],
         "recommended_emphasis": ["FastAPI work"],

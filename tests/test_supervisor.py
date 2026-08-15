@@ -86,10 +86,10 @@ RESEARCH_EXTRACTION = {
 
 SCORING_JUDGEMENT = {
     "judgements": [
-        {"requirement_index": 0, "met": True, "evidence_index": 0},
-        {"requirement_index": 1, "met": True, "evidence_index": 0},
-        {"requirement_index": 2, "met": True, "evidence_index": 0},
-        {"requirement_index": 3, "met": False, "evidence_index": None},
+        {"requirement_index": 0, "match_level": "match", "evidence_index": 0},
+        {"requirement_index": 1, "match_level": "match", "evidence_index": 0},
+        {"requirement_index": 2, "match_level": "match", "evidence_index": 0},
+        {"requirement_index": 3, "match_level": "missing", "evidence_index": None},
     ],
     "recommended_emphasis": [0, 1],
 }
