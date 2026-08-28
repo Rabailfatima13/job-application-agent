@@ -205,19 +205,18 @@ def run_totals(context: RunContext) -> dict[str, float | int]:
 def render_sidebar(settings: Settings) -> None:
     """Configuration, without ever showing a credential."""
     with st.sidebar:
-        st.header("Configuration")
+        st.header("⚙️ Configuration")
         st.caption("Values are never displayed - only whether they are set.")
-        st.write(
-            {
-                "Parsing / research model": (
-                    f"{settings.light.provider} · {settings.light.model}"
-                ),
-                "Scoring / writing model": (
-                    f"{settings.heavy.provider} · {settings.heavy.model}"
-                ),
-                "Web search": settings.search_provider,
-            }
+
+        st.markdown(
+            f"**Parsing / research:** {settings.light.provider} · {settings.light.model}"
         )
+        st.markdown(
+            f"**Scoring / writing:** {settings.heavy.provider} · {settings.heavy.model}"
+        )
+        st.markdown(f"**Web search:** {settings.search_provider}")
+
+        st.divider()
 
         for label, configured in (
             ("Scoring/writing key", bool(settings.heavy.api_key)),
@@ -229,6 +228,7 @@ def render_sidebar(settings: Settings) -> None:
         if not settings.search_api_key:
             st.info("No search key: the run works, company research is skipped.")
 
+        st.divider()
         st.caption(f"Tracker: {settings.tracker_db_path.name}")
 
 
@@ -238,29 +238,31 @@ def render_progress(context: RunContext) -> None:
     Reconstructed from the run's own trace rather than guessed, so what is
     shown is what actually happened.
     """
-    st.subheader("Pipeline")
-    durations = {
-        event.name: event.duration_ms
-        for event in context.trace.events
-        if event.name in dict(STAGES)
-    }
-    for name, label in STAGES:
-        if name in durations:
-            st.write(f"✅ {label} · {durations[name] / 1000:.1f}s")
-        else:
-            st.write(f"➖ {label} · skipped")
+    st.subheader("🧭 Pipeline")
+    with st.container(border=True):
+        durations = {
+            event.name: event.duration_ms
+            for event in context.trace.events
+            if event.name in dict(STAGES)
+        }
+        for name, label in STAGES:
+            if name in durations:
+                st.markdown(f"✅ **{label}**  ·  {durations[name] / 1000:.1f}s")
+            else:
+                st.markdown(f"➖ {label}  ·  _skipped_")
 
-    totals = run_totals(context)
-    columns = st.columns(3)
-    columns[0].metric("Model + tool calls", totals["calls"])
-    columns[1].metric("Total time", f"{totals['elapsed_ms'] / 1000:.1f}s")
-    columns[2].metric(
-        "Tokens", f"{totals['input_tokens']} in / {totals['output_tokens']} out"
-    )
-    st.caption(
-        f"{totals['call_ms'] / 1000:.1f}s of that was spent inside model and tool "
-        "calls; the remainder is orchestration."
-    )
+        st.divider()
+        totals = run_totals(context)
+        columns = st.columns(3)
+        columns[0].metric("Model + tool calls", totals["calls"])
+        columns[1].metric("Total time", f"{totals['elapsed_ms'] / 1000:.1f}s")
+        columns[2].metric(
+            "Tokens", f"{totals['input_tokens']} in / {totals['output_tokens']} out"
+        )
+        st.caption(
+            f"{totals['call_ms'] / 1000:.1f}s of that was spent inside model and tool "
+            "calls; the remainder is orchestration."
+        )
 
 
 # One marker and one heading per match level. The fit report groups
@@ -282,13 +284,39 @@ MATCH_LEVEL_DISPLAY: dict[MatchLevel, tuple[str, str]] = {
 MISSING_FROM_CV_CAPTION = "Not mentioned in the CV - no reliable evidence found."
 
 
-def _render_match_group(matches: list[RequirementMatch]) -> None:
-    for match in matches:
-        st.write(f"**{match.requirement}**")
-        if match.evidence:
-            st.caption(f"Evidence from your CV: {match.evidence}")
-        if match.reason:
-            st.caption(match.reason)
+# The status element that makes each match level visually obvious at a
+# glance - purely presentational, applied to the same match_level the scorer
+# already produced. Never used to decide anything, only to color a badge.
+_MATCH_LEVEL_STATUS = {
+    MatchLevel.match: st.success,
+    MatchLevel.partial: st.warning,
+    MatchLevel.related: st.info,
+    MatchLevel.missing: st.error,
+}
+
+_MATCH_LEVEL_LABEL: dict[MatchLevel, str] = {
+    MatchLevel.match: "MATCH",
+    MatchLevel.partial: "PARTIAL",
+    MatchLevel.related: "RELATED",
+    MatchLevel.missing: "MISSING",
+}
+
+
+def _render_requirement_card(match: RequirementMatch, level: MatchLevel) -> None:
+    """One requirement as its own visually distinct card: a colored status
+    badge, the requirement text, then the CV evidence and the model's
+    reasoning kept visibly apart - the same information as before, just
+    easier to scan than a run-on paragraph."""
+    with st.container(border=True):
+        _MATCH_LEVEL_STATUS[level](_MATCH_LEVEL_LABEL[level])
+        st.markdown(f"**{match.requirement}**")
+        if level == MatchLevel.missing:
+            st.caption(MISSING_FROM_CV_CAPTION)
+        else:
+            if match.evidence:
+                st.caption(f"📄 Evidence from your CV: {match.evidence}")
+            if match.reason:
+                st.caption(f"💭 {match.reason}")
 
 
 def render_fit_report(context: RunContext) -> None:
@@ -296,9 +324,16 @@ def render_fit_report(context: RunContext) -> None:
     if report is None:
         return
 
-    st.subheader("Fit report")
-    st.metric("Overall fit", f"{report.overall_fit:.0%}")
-    st.caption(f"{report.role} at {report.company}")
+    st.subheader("📊 Fit Report")
+    with st.container(border=True):
+        left, right = st.columns([1, 2])
+        left.metric("Overall fit", f"{report.overall_fit:.0%}")
+        with right:
+            st.markdown(f"**{report.role}** at **{report.company}**")
+            st.caption(
+                f"{len(report.requirement_matches)} requirement(s) judged "
+                "against your CV evidence."
+            )
 
     by_level: dict[MatchLevel, list[RequirementMatch]] = {
         level: [] for level in MatchLevel
@@ -306,26 +341,24 @@ def render_fit_report(context: RunContext) -> None:
     for match in report.requirement_matches:
         by_level[match.match_level].append(match)
 
-    for level in (MatchLevel.match, MatchLevel.partial, MatchLevel.related):
+    for level in (
+        MatchLevel.match,
+        MatchLevel.partial,
+        MatchLevel.related,
+        MatchLevel.missing,
+    ):
         matches = by_level[level]
         if not matches:
             continue
         marker, heading = MATCH_LEVEL_DISPLAY[level]
-        st.write(f"{marker} **{heading}**")
-        _render_match_group(matches)
-
-    missing = by_level[MatchLevel.missing]
-    if missing:
-        marker, heading = MATCH_LEVEL_DISPLAY[MatchLevel.missing]
-        st.write(f"{marker} **{heading}**")
-        for match in missing:
-            st.write(f"**{match.requirement}**")
-            st.caption(MISSING_FROM_CV_CAPTION)
+        st.markdown(f"#### {marker} {heading}")
+        for match in matches:
+            _render_requirement_card(match, level)
 
 
 def render_research(context: RunContext) -> None:
     brief = context.brief
-    st.subheader("Company research")
+    st.subheader("🔎 Company Research")
     if brief is None or not brief.sources:
         st.info(
             brief.summary
@@ -334,27 +367,31 @@ def render_research(context: RunContext) -> None:
         )
         return
 
-    st.write(brief.summary)
-    if brief.facts:
-        for fact in brief.facts:
-            st.write(f"- {fact}")
-    st.write("**Sources**")
-    for source in brief.sources:
-        st.write(f"- [{source.title}]({source.url})")
+    with st.container(border=True):
+        st.markdown(brief.summary)
+        if brief.facts:
+            st.markdown("**Key findings**")
+            for fact in brief.facts:
+                st.markdown(f"- {fact}")
+        with st.expander(f"Sources ({len(brief.sources)})"):
+            for source in brief.sources:
+                st.markdown(f"- [{source.title}]({source.url})")
 
 
 def render_documents(context: RunContext) -> None:
-    st.subheader("Tailored CV")
+    st.subheader("📝 Tailored CV")
     if context.tailored_cv is None:
         st.warning(
             "No tailored CV was produced. The grounding check could not verify "
             "a draft, so your original CV stands."
         )
     else:
-        for bullet in context.tailored_cv.bullets:
-            st.write(f"- {bullet}")
-        if context.tailored_cv.omitted:
-            st.caption("De-prioritised: " + "; ".join(context.tailored_cv.omitted))
+        with st.container(border=True):
+            st.markdown("\n".join(f"- {b}" for b in context.tailored_cv.bullets))
+            if context.tailored_cv.omitted:
+                st.caption(
+                    "De-prioritised: " + "; ".join(context.tailored_cv.omitted)
+                )
         st.download_button(
             "Download tailored CV",
             data="\n".join(f"- {b}" for b in context.tailored_cv.bullets),
@@ -362,11 +399,12 @@ def render_documents(context: RunContext) -> None:
             mime="text/plain",
         )
 
-    st.subheader("Cover letter")
+    st.subheader("✉️ Cover Letter")
     if context.cover_letter is None:
         st.warning("No cover letter was produced.")
     else:
-        st.write(context.cover_letter.body)
+        with st.container(border=True):
+            st.markdown(context.cover_letter.body)
         st.download_button(
             "Download cover letter",
             data=context.cover_letter.body,
@@ -377,7 +415,7 @@ def render_documents(context: RunContext) -> None:
 
 def render_validation(context: RunContext) -> None:
     """What the guards did - the part that makes the system trustworthy."""
-    st.subheader("Validation")
+    st.subheader("🛡️ Validation")
     st.caption(
         "Generated claims are checked against your CV. Anything the CV does "
         "not support is rejected and the model is asked to rewrite."
@@ -388,10 +426,12 @@ def render_validation(context: RunContext) -> None:
 
     if not guard_events:
         st.success("Every generated claim was supported by your CV.")
-    for event in guard_events:
-        st.write(f"**{GUARDS[event.name]}**")
-        if event.result:
-            st.caption(event.result)
+    else:
+        for event in guard_events:
+            with st.container(border=True):
+                st.warning(f"**{GUARDS[event.name]}**")
+                if event.result:
+                    st.caption(event.result)
 
     if retries:
         st.caption(
@@ -401,15 +441,16 @@ def render_validation(context: RunContext) -> None:
 
 
 def render_application(context: RunContext, settings: Settings) -> None:
-    st.subheader("Application tracker")
+    st.subheader("📁 Application Tracker")
     if context.application is not None:
         record = context.application
-        st.write(
-            f"**{record.role}** at **{record.company}** · fit "
-            f"{record.fit_score:.0%} · status `{record.status.value}`"
-        )
-        st.caption(f"Application id: {record.application_id}")
-        st.caption("Nothing is submitted anywhere - this is a saved draft.")
+        with st.container(border=True):
+            left, mid, right = st.columns([2, 1, 1])
+            left.markdown(f"**{record.role}** at **{record.company}**")
+            mid.metric("Fit", f"{record.fit_score:.0%}")
+            right.markdown(f"Status: `{record.status.value}`")
+            st.caption(f"Application id: {record.application_id}")
+            st.caption("Nothing is submitted anywhere - this is a saved draft.")
 
     try:
         from job_agent.memory import SQLiteApplicationTracker
@@ -420,7 +461,7 @@ def render_application(context: RunContext, settings: Settings) -> None:
         return
 
     if rows:
-        st.write(f"**All tracked applications ({len(rows)})**")
+        st.markdown(f"**All tracked applications ({len(rows)})**")
         st.table(
             [
                 {
@@ -440,10 +481,15 @@ def render_results(context: RunContext, settings: Settings) -> None:
         st.warning(warning)
 
     render_progress(context)
+    st.divider()
     render_fit_report(context)
+    st.divider()
     render_research(context)
+    st.divider()
     render_documents(context)
+    st.divider()
     render_validation(context)
+    st.divider()
     render_application(context, settings)
 
 
@@ -530,6 +576,8 @@ def main() -> None:
             "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="jd_file"
         )
         jd_pasted = st.text_area("...or paste it", height=220, key="jd_text")
+
+    st.divider()
 
     # Better to refuse the click than to spend a minute failing at it.
     blockers = missing_requirements(settings)

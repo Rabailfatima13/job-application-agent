@@ -186,3 +186,77 @@ Update `docs/ARCHITECTURE.md`, `Prompts.md` and the README where necessary, mark
 Then STOP — no MCP, Streamlit, or multi-model comparison work.
 
 ---
+
+## Note — Remaining Week 7 work (reconstructed from commit history, not a verbatim transcript)
+
+The sessions between Prompt 1 above and Week 8 below were not logged verbatim at the time. This note summarises what they actually built, reconstructed honestly from the real git history so this log stays complete without fabricating prompt text that was never recorded:
+
+- **`aa91acb` — fix: accept singular/plural variants in grounding, drop letter placeholders.** A live rehearsal rejected three correctly-grounded drafts because the CV said "REST API" and the writer wrote "REST APIs." Fixed with a conservative singular-form match (`singular()`) added as an *extra* way to match, never a replacement for the existing substring check. Also fixed "Sincerely, [Candidate]" by passing the real candidate name into the writing prompt and forbidding template placeholders outright. 222 tests passing, ruff clean, 94% coverage at that point.
+- **`7f5a41e` — feat: complete week 7 core - grounded tailoring with two evidence domains.** Split grounding into two evidence domains (candidate CV vs. verified company brief) so a company fact (e.g. "Arbisoft uses Django") can support "your company uses Django" but never "I have Django experience." Closed a hole where the advertised role title itself counted as naming evidence ("Kubernetes Engineer" no longer licenses "my Kubernetes skills"). Fixed the research query to search for the company name alone rather than company + role + technologies, after a live run returned a stranger's LinkedIn profile and a different company's job posting. 283 tests passing, 94% coverage, verified live against real models and real web search.
+- **`3944d8b` — fix: prevent search API key leakage in HTTP logs.** A live MCP run printed a real SerpAPI key in plaintext, because the key travels as a URL query parameter and `httpx` logs full request URLs at INFO. Fixed by silencing the httpx request logger at import and having every HTTP error report only its status code, with `from None` keeping the URL-bearing exception out of the traceback.
+- **`3ccaa6f` — feat: complete MCP server integration.** Exposed the tracker (`applications://all` resource) and seven tools (`list_applications`, `get_application`, `track_application`, `set_application_status`, `search_company`, `score_fit`, `tailor_application`) as thin adapters over the existing agents — no business logic re-implemented. Model-backed tools default to the light tier so an MCP call never quietly bills the expensive provider. 44 tests, verified live against Groq and SerpAPI through a real stdio client.
+- The Streamlit UI (`job_agent/app/ui.py`, `streamlit_app.py`) was also built in this span, giving the pipeline its first human-facing surface.
+
+---
+
+# Week 8 – prompts.md
+
+## Prompt 1 – Final Project Freeze: Audit, Fix, Verify, Commit, and Push
+
+Requested one final comprehensive audit of the entire repository, with every genuine issue fixed — explicitly framed as finalization, not redesign: no new features, no scope changes, no architecture changes, no speculative improvements. Covered functional completeness of every pipeline stage, scoring architecture (four-level MATCH/PARTIAL/RELATED/MISSING, weights, evidence-index downgrade), grounding/anti-fabrication, providers/configuration, security/repository hygiene, documentation consistency, and full test/coverage/lint verification. Explicitly forbade replacing the LLM-judgement architecture with keyword matching. Required staging only intentional files, one commit with message `feat: finalize job application agent`, then pushing `main` to `origin` (no force, no history rewrite), followed by a fixed-format final report (status / fixes / verification / git / limitations / verdict) and an explicit instruction to stop polishing afterward.
+
+**Outcome:** three independent audits found four genuine, narrow bugs — a non-JSON 200 search response that would crash the whole pipeline instead of degrading gracefully, a misleading provider error message that always blamed `LIGHT_BASE_URL` even when the heavy tier was misconfigured, an unenforced `met`/`match_level` consistency invariant on `RequirementMatch`, and dead `LANGSMITH_*` variables in `.env.example` with no corresponding implementation. All four fixed with regression tests added. 434 tests passing, 98% coverage, ruff clean. Commit `171d2f5` created and pushed.
+
+Then STOP. Do not suggest another round of improvements.
+
+---
+
+## Prompt 2 – GitHub Synchronization Only
+
+A narrow follow-up: verify branch/working-tree/commit state, run `git push origin main`, and report only the push result — explicitly no code changes, no new audit. The push had been blocked by the harness's own permission system in the previous turn; this time it succeeded (`171d2f5` synchronized to `origin/main`).
+
+---
+
+## Prompt 3 – Mentor Documentation and Presentation
+
+Requested two polished, human-readable deliverables to prepare for explaining the project to the internship mentor: `docs/PROJECT_EXPLANATION.md` (a 27-section document — overview, problem statement, core design principle, end-to-end workflow, architecture, per-agent breakdown, model routing, structured outputs, grounding, scoring methodology, research, writing pipeline, persistence, UI, MCP, error handling, testing, security, a verified bug-fix timeline, final verification, limitations vs. future work, 20 mentor Q&As, 2-minute and 5-minute spoken explanations, and a demo script) and `docs/Job_Application_Agent_Presentation.pptx` (a 16-slide deck with native-shape diagrams and speaker notes on every slide). Required every technical claim to be verified against the actual repository rather than repeated from memory, explicitly forbade fabricating statistics or claiming a known scoring edge case had been live-reconfirmed when it hadn't, and required a final accounting of any claim that couldn't be verified.
+
+**Outcome:** both files created after directly reading every remaining unread source file and the full git history. One unverifiable claim was caught and excluded rather than included: a "38% fit" figure and itemized requirement breakdown mentioned in earlier conversation context did not appear anywhere in the actual repository, so only the verified "10%" figure (present in `scoring.py`'s own docstring) was used.
+
+---
+
+## Prompt 4 – Commit and Push the Documentation
+
+Committed the two new documentation files with message `docs: add final project explanation and presentation` and pushed. Commit `8a8985a`, synchronized to `origin/main`.
+
+---
+
+## Prompt 5 – README Simplification
+
+The full-detail README (423 lines) was judged to be "doing too much" rather than actually helping — the request was for something short, readable, and practical: a five-line description of the whole project, then setup, run, and test instructions, with the deep material left to the two docs files instead of duplicated in the README. Rewritten to roughly 45 lines. Left uncommitted pending review, per this project's standing rule of only committing when explicitly asked.
+
+---
+
+## Prompt 6 – Streamlit UI Visual Redesign (Presentation Only)
+
+Explicitly framed as a UI-only visual/presentation change with the backend "frozen": no change to scoring, prompts, providers, retry counts, validation, grounding, or the actual information displayed — only how the existing Streamlit results are laid out. Requested a dashboard feel: a prominent fit-score metric, per-requirement cards, `st.success`/`st.warning`/`st.info`/`st.error` used to make MATCH/PARTIAL/RELATED/MISSING visually obvious, clearer separation between CV evidence and the model's reasoning, and native Streamlit layout only (containers, columns, expanders, dividers) — no custom CSS/HTML, no over-designed dashboard.
+
+**Outcome:** before editing, the full 52-test `test_streamlit_app.py` suite was read to identify every exact string, element type, and the one relative-ordering assertion the redesign had to preserve (including a subtlety: `AppTest`'s text walker groups elements by *type* before concatenating, not by page position, and `st.table` — not `st.dataframe` — is what the test harness actually walks). Only `job_agent/app/ui.py` was touched; all 52 UI tests and the full 434-test suite passed on the first run after the redesign, with no logic function's signature or behavior changed.
+
+---
+
+## Prompt 7 – Final Clean Audit + Separate GitHub Repository (in progress)
+
+Requested one more full read-only audit (architecture, pipeline, scoring, grounding, validation, retries, routing, providers, research fallback, tracker, MCP, UI, tests, docs, README, `.gitignore`, secrets, generated/stale files) plus creation of a brand-new, separate, presentation-ready GitHub repository named `job-application-agent` containing only curated, secret-free material — with an explicit instruction to STOP rather than overwrite anything if that name was already taken.
+
+**Outcome:** the audit found the repository clean (434 tests, 98% coverage, ruff clean, no tracked secrets, `.env` correctly ignored) apart from one stale cross-reference in `docs/PROJECT_EXPLANATION.md` (it claimed "the README states this limitation," which stopped being true once the README was simplified in Prompt 5) — fixed. Part 2 was stopped as instructed: `job-application-agent` is not just likely taken, it is the exact name of the repository this whole project has been pushed to throughout Phase 3, and this environment also has no authenticated GitHub API/CLI access to create a new repository regardless of name. Flagged back to the user rather than guessing a different name or proceeding.
+
+---
+
+## Prompt 8 – Roadmap Verification and "Fulfill Everything" (this session)
+
+Given screenshots of the program's official Week 7 ("Advanced AI Features & Polish") and Week 8 ("Finalization, Documentation & Final Presentation") roadmap slides, asked first whether Week 7's checklist was satisfied, then asked for the Week 7 GitHub branch link, then asked to fulfill every requirement on both slides with everything working properly.
+
+**Outcome:** verified against the live `.env` (provider names only, no key values read aloud) that both model tiers are currently configured to the same provider (Groq), so "≥2 LLM providers active" is not currently true despite the architecture supporting it; confirmed no Dockerfile/deployment config exists in this repository; confirmed live multi-model comparison and research caching remain unbuilt, exactly as already disclosed in this project's own Limitations/Future Work sections. Confirmed neither `task-manager-api` (branches stop at `week5`) nor `job-application-agent` (only `main`) has a `week7` branch. Flagged directly that three of the "fulfill everything" items — a live multi-model comparison view, Docker/deployment, and caching — would mean reversing the explicit "frozen backend, no new features" instruction given in Prompts 1, 6, and 7, rather than silently building them.
+
+---
