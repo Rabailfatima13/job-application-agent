@@ -19,6 +19,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..memory.research_cache import CompanyResearchCache
 from ..memory.session import RunContext
 from ..models import CompanyBrief, JobDescription, Source
 from ..observability import traced_tool_call
@@ -28,7 +29,16 @@ from ..validation import generate_validated
 from .base import BaseAgent
 
 RESEARCH_STEP = "summarise"
-RESEARCH_MAX_TOKENS = 1024
+# Groq enforces a hard per-minute cap on *requested* output tokens for some
+# light-tier models (reasoning-capable ones especially) - a live run against
+# qwen/qwen3.8-27b was rejected outright with "Requested: 1024 ... Limit:
+# 1000" for this exact step: any single request asking for >=1000 output
+# tokens on that model/account fails before it runs at all, so 1024 alone
+# was already over the limit regardless of how short the actual reply would
+# have been. The prompt itself bounds the output to 2-4 summary sentences
+# plus 3-6 short facts (see RESEARCH_SYSTEM_PROMPT), which comfortably fits
+# well under the cap.
+RESEARCH_MAX_TOKENS = 700
 
 # Appended to the company name so the search leans towards company information
 # rather than vacancies. Generic on purpose - nothing here is specific to any
@@ -114,6 +124,17 @@ class ResearchAgent(BaseAgent):
 
     name = "research"
 
+    def __init__(
+        self, *args, cache: CompanyResearchCache | None = None, **kwargs
+    ) -> None:
+        """`cache`, like `WritingAgent`'s `grounding_attempts`, is an optional
+        addition on top of the base constructor - omitting it (the default)
+        reproduces the exact behaviour this agent had before caching existed:
+        every call searches and summarises, nothing is ever stored or read
+        back."""
+        super().__init__(*args, **kwargs)
+        self.cache = cache
+
     def run(self, context: RunContext) -> CompanyBrief:
         if context.job is None:
             raise ValueError(
@@ -126,11 +147,18 @@ class ResearchAgent(BaseAgent):
         return brief
 
     def research(self, job: JobDescription, max_results: int = DEFAULT_MAX_RESULTS):
-        """Search for the company and summarise what comes back."""
+        """Search for the company and summarise what comes back - or reuse a
+        still-fresh cached brief for the same company and do neither."""
         if job.company == UNKNOWN_COMPANY:
             # Searching for "Unknown" would return noise, and guessing the
-            # employer from the role text would be a fabrication.
+            # employer from the role text would be a fabrication. Also never
+            # worth a cache lookup: "Unknown" names no real company.
             return self._unavailable(job.company, NO_COMPANY_SUMMARY)
+
+        if self.cache is not None:
+            cached = self.cache.get(job.company)
+            if cached is not None:
+                return cached
 
         try:
             results = self.call_tool(
@@ -147,7 +175,18 @@ class ResearchAgent(BaseAgent):
             return self._unavailable(job.company, NO_RELEVANT_RESULTS_SUMMARY)
 
         extraction = self._summarise(job, results)
-        return self._ground(extraction, results, job.company)
+        brief = self._ground(extraction, results, job.company)
+
+        # Only a genuinely sourced result is cached - a search failure, an
+        # empty result set, or an all-irrelevant result set all produce a
+        # valid but sourceless "unavailable" brief (see `_unavailable`), and
+        # caching one of those would let one transient failure keep
+        # returning "unavailable" for every later lookup within the TTL,
+        # long after the real problem (a rate limit, a network blip) passed.
+        if self.cache is not None and brief.sources:
+            self.cache.set(job.company, brief)
+
+        return brief
 
     def _keep_relevant(
         self, results: list[SearchResult], company: str

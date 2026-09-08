@@ -236,6 +236,45 @@ def test_an_empty_claim_list_is_trivially_clean(cv):
     assert check_grounding([], cv).passed
 
 
+# --- Regression: comma thousands-separators (found in a live tailoring run) --
+
+
+def test_numbers_normalise_comma_thousands_separators():
+    # A live tailoring run had the writer reword the CV's own "1000+" as
+    # "1,000+" - `\d+` alone splits "1,000" into two runs ("1", "000"),
+    # neither of which matches the source's single "1000", so a genuinely
+    # grounded claim was rejected as an invented figure.
+    assert numbers_in("1,000+ attendees") == numbers_in("1000+ attendees")
+
+
+def test_a_comma_formatted_number_matching_the_cv_is_supported():
+    cv_with_a_number = ParsedCV(
+        raw_text="Organized a conference for 1000+ attendees.",
+        evidence=[
+            CVEvidence(text="Organized a conference for 1000+ attendees.")
+        ],
+    )
+
+    result = check("Organized a conference for 1,000+ attendees.", cv_with_a_number)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_a_comma_formatted_number_absent_from_the_cv_is_still_rejected():
+    # The fix must not stop checking numbers altogether - only stop
+    # mis-splitting a real one across a thousands separator.
+    cv_without_that_number = ParsedCV(
+        raw_text="Built internal tools.",
+        evidence=[CVEvidence(text="Built internal tools.")],
+    )
+
+    result = check(
+        "Organized a conference for 1,000+ attendees.", cv_without_that_number
+    )
+
+    assert not result.passed
+
+
 # --- Regression: plural/singular variation (found in the live rehearsal) -----
 
 

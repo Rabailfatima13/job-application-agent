@@ -1,0 +1,40 @@
+services:
+  # The Streamlit app - the one service `docker compose up` starts.
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    # Real keys live only in your local .env (gitignored, never baked into
+    # the image - see .dockerignore) and are injected at container start.
+    env_file:
+      - .env
+    # Bind-mounted so the SQLite tracker db and trace log survive a
+    # container rebuild/restart, and are inspectable from the host at
+    # ./data - the same directory config.py already defaults to locally.
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # The MCP server (FR-8) - stdio-based, so it is not a long-running network
+  # service like `app` and is not started by `docker compose up` on its own.
+  # Run it on demand with: docker compose run --rm mcp
+  mcp:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: ["python", "-m", "job_agent.mcp_server.server"]
+    profiles: ["mcp"]
+    stdin_open: true
+    tty: true

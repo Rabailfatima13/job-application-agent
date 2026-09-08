@@ -168,6 +168,46 @@ def test_gemini_and_groq_both_get_json_mode():
     assert groq_calls[0]["response_format"] == {"type": "json_object"}
 
 
+def test_qwen_requests_disable_reasoning():
+    """The fix for the empty-completion failure: a live CVExtraction run
+    against a reasoning model returned content='' because its chain-of-thought
+    consumed the whole max_tokens budget before it reached the answer. Qwen
+    documents reasoning_effort="none" as disabling reasoning outright."""
+    client, calls = stub_client(
+        ModelConfig(
+            provider="openai_compatible",
+            model="qwen/qwen3.8-27b",
+            api_key="k",
+            base_url="https://api.groq.com/openai/v1",
+        )
+    )
+
+    client.complete([{"role": "user", "content": "hi"}], system="Reply with JSON.")
+
+    assert calls[0]["reasoning_effort"] == "none"
+    # Unrelated to the fix - still requested, exactly as for any other model.
+    assert calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_non_qwen_models_never_receive_reasoning_effort():
+    """A model that never documented this parameter must see an unchanged
+    request - an unrecognised field could be rejected outright by a stricter
+    OpenAI-compatible server (Ollama, OpenRouter, gpt-oss on Groq)."""
+    for model in ("gemini-3.6-flash", "llama-3.3-70b-versatile", "openai/gpt-oss-20b"):
+        client, calls = stub_client(
+            ModelConfig(
+                provider="openai_compatible",
+                model=model,
+                api_key="k",
+                base_url="https://example.invalid/v1",
+            )
+        )
+
+        client.complete([{"role": "user", "content": "hi"}], system="s")
+
+        assert "reasoning_effort" not in calls[0]
+
+
 # --- existing behaviour is unchanged ------------------------------------------
 
 

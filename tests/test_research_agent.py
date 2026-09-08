@@ -13,11 +13,13 @@ import pytest
 from job_agent.agents import ResearchAgent
 from job_agent.agents.research import (
     NO_COMPANY_SUMMARY,
+    RESEARCH_MAX_TOKENS,
     build_query,
     build_summarisation_prompt,
     mentions_company,
     unsupported_numbers,
 )
+from job_agent.memory import CompanyResearchCache
 from job_agent.memory.session import RunContext
 from job_agent.models import CompanyBrief, JobDescription
 from job_agent.observability import TraceCollector
@@ -78,11 +80,13 @@ class FakeSearchTool:
         )
 
 
-def build_agent(make_router, reply=None, results=None, error=None, collector=None):
+def build_agent(
+    make_router, reply=None, results=None, error=None, collector=None, cache=None
+):
     router = make_router(light_replies=[reply] if reply else None)
     tool = FakeSearchTool(results, error)
     agent = ResearchAgent(
-        router, tools=ToolRegistry([tool.as_tool()]), collector=collector
+        router, tools=ToolRegistry([tool.as_tool()]), collector=collector, cache=cache
     )
     return agent, tool, router
 
@@ -253,6 +257,22 @@ def test_summarisation_runs_on_the_cheap_tier_through_the_router(make_router, jo
 
     assert len(router.client("light").calls) == 1
     assert router.client("heavy").calls == []
+
+
+def test_the_request_stays_under_groqs_output_token_rate_limit(make_router, job):
+    """Regression: a live run against qwen/qwen3.8-27b (the light-tier
+    model) was rejected outright by Groq's 1000 output-tokens-per-minute
+    cap - "Requested: 1024 ... Limit: 1000" - the request fails before it
+    runs at all once max_tokens reaches 1000, regardless of the actual
+    reply size (the prompt itself already bounds it to a short summary plus
+    a few facts). RESEARCH_MAX_TOKENS must stay safely under that ceiling."""
+    agent, _, router = build_agent(make_router, json.dumps(EXTRACTION), RESULTS)
+
+    agent.research(job)
+
+    assert RESEARCH_MAX_TOKENS < 1000
+    calls = router.client("light").calls
+    assert calls[0]["max_tokens"] == RESEARCH_MAX_TOKENS
 
 
 # --- The brief ---------------------------------------------------------------
@@ -460,3 +480,182 @@ def test_run_refuses_to_research_an_unparsed_posting(make_router):
 
     with pytest.raises(ValueError, match="parsed job description"):
         agent.run(RunContext(cv_text="cv", jd_text="jd"))
+
+
+# --- company research cache ---------------------------------------------------
+#
+# tests/test_research_cache.py covers the store itself; these cover the
+# agent's own wiring - a miss still runs the normal flow and stores what it
+# produces, a hit skips search and the model entirely, an expired entry is
+# treated as a miss, a sourceless/degraded result is never cached, and
+# omitting `cache` (the default) reproduces the agent's exact pre-caching
+# behaviour.
+
+
+def test_a_cache_miss_performs_the_normal_research_flow(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, tool, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=cache
+    )
+
+    brief = agent.research(job)
+
+    assert len(tool.calls) == 1
+    assert brief.company == "Arbisoft"
+
+
+def test_a_successful_sourced_research_is_stored_in_the_cache(
+    make_router, job, tmp_path
+):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, _, _ = build_agent(make_router, json.dumps(EXTRACTION), RESULTS, cache=cache)
+
+    brief = agent.research(job)
+
+    cached = cache.get("Arbisoft")
+    assert cached is not None
+    assert cached.summary == brief.summary
+    assert cached.facts == brief.facts
+    assert cached.sources == brief.sources
+
+
+def test_a_cache_hit_returns_the_cached_brief(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    cache.set(
+        "Arbisoft",
+        CompanyBrief(
+            company="Arbisoft",
+            summary="Cached summary.",
+            facts=["Cached fact."],
+            sources=[],
+        ),
+    )
+    agent, _, _ = build_agent(make_router, json.dumps(EXTRACTION), RESULTS, cache=cache)
+
+    brief = agent.research(job)
+
+    assert brief.summary == "Cached summary."
+    assert brief.facts == ["Cached fact."]
+
+
+def test_a_cache_hit_never_calls_web_search(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    cache.set("Arbisoft", CompanyBrief(company="Arbisoft", summary="Cached.", sources=[]))
+    agent, tool, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=cache
+    )
+
+    agent.research(job)
+
+    assert tool.calls == []
+
+
+def test_a_cache_hit_never_calls_the_summarisation_model(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    cache.set("Arbisoft", CompanyBrief(company="Arbisoft", summary="Cached.", sources=[]))
+    agent, _, router = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=cache
+    )
+
+    agent.research(job)
+
+    assert router.client("light").calls == []
+
+
+def test_an_expired_cache_entry_performs_research_again(make_router, job, tmp_path):
+    db_path = tmp_path / "app.db"
+    long_lived = CompanyResearchCache(db_path, ttl_hours=24)
+    long_lived.set(
+        "Arbisoft", CompanyBrief(company="Arbisoft", summary="Cached.", sources=[])
+    )
+    # A fresh cache object over the same file, but already expired - the same
+    # row, viewed with a TTL of zero.
+    already_expired = CompanyResearchCache(db_path, ttl_hours=0)
+    agent, tool, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=already_expired
+    )
+
+    brief = agent.research(job)
+
+    assert len(tool.calls) == 1  # research actually ran again
+    assert brief.company == "Arbisoft"
+    assert brief.summary != "Cached."
+
+
+def test_a_search_failure_is_not_cached(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, _, _ = build_agent(
+        make_router, error=SearchError("boom"), cache=cache
+    )
+
+    agent.research(job)
+
+    assert cache.get("Arbisoft") is None
+
+
+def test_an_empty_result_set_is_not_cached(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, _, _ = build_agent(make_router, results=[], cache=cache)
+
+    agent.research(job)
+
+    assert cache.get("Arbisoft") is None
+
+
+def test_results_with_nothing_relevant_are_not_cached(make_router, job, tmp_path):
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    irrelevant = [
+        SearchResult(title="Unrelated company", url="https://example.com", snippet="x")
+    ]
+    agent, _, _ = build_agent(make_router, results=irrelevant, cache=cache)
+
+    agent.research(job)
+
+    assert cache.get("Arbisoft") is None
+
+
+def test_an_unnamed_company_is_never_looked_up_in_the_cache(make_router, tmp_path):
+    unnamed = JobDescription(
+        role="Engineer", company="Unknown", raw_text="...", requirements=[]
+    )
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, tool, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=cache
+    )
+
+    agent.research(unnamed)
+
+    assert tool.calls == []
+    assert cache.get("Unknown") is None
+
+
+def test_company_name_casing_hits_the_cache_across_lookups(make_router, job, tmp_path):
+    """Integration proof that the agent hands the store its raw, un-normalized
+    company name and lets the store reconcile it - see
+    test_research_cache.py for the normalization rule itself."""
+    cache = CompanyResearchCache(tmp_path / "app.db")
+    agent, tool, _ = build_agent(
+        make_router, json.dumps(EXTRACTION), RESULTS, cache=cache
+    )
+    agent.research(job)  # "Arbisoft" -> cached
+
+    differently_cased = job.model_copy(update={"company": " ARBISOFT "})
+    agent.research(differently_cased)
+
+    assert len(tool.calls) == 1  # the second call was a cache hit
+
+
+def test_cache_none_preserves_the_original_uncached_behaviour(make_router, job):
+    """The default - omitting `cache` entirely - must reproduce exactly what
+    this agent did before caching existed: every call searches and
+    summarises again, nothing is ever remembered between calls."""
+    router = make_router(light_replies=[json.dumps(EXTRACTION), json.dumps(EXTRACTION)])
+    tool = FakeSearchTool(RESULTS)
+    agent = ResearchAgent(router, tools=ToolRegistry([tool.as_tool()]))
+    assert agent.cache is None
+
+    agent.research(job)
+    agent.research(job)
+
+    assert len(tool.calls) == 2
+    assert len(router.client("light").calls) == 2

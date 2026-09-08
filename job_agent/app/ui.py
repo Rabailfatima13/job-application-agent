@@ -23,7 +23,19 @@ import streamlit as st
 
 from job_agent.config import ModelConfig, Settings, load_settings
 from job_agent.memory.session import RunContext
-from job_agent.models import MatchLevel, RequirementMatch
+from job_agent.memory.tailored_cv_version import TailoredCVVersionStore
+from job_agent.models import (
+    BaselineCV,
+    FitReport,
+    JobDescription,
+    MatchLevel,
+    RequirementMatch,
+    RoleRequirement,
+    TailoredCV,
+    User,
+)
+
+from . import auth, profile
 
 # The stages a full run goes through, in order, with labels a human can read.
 STAGES: list[tuple[str, str]] = [
@@ -122,15 +134,38 @@ def missing_requirements(settings: Settings) -> list[str]:
 # --- the pipeline call -------------------------------------------------------
 
 
-def run_pipeline(cv_source: str, jd_source: str, settings: Settings) -> RunContext:
+def run_pipeline(
+    cv_source: str,
+    jd_source: str,
+    settings: Settings,
+    on_progress=None,
+) -> RunContext:
     """Run one application through the existing supervisor.
 
+    Watched with the graph's own `.stream()` instead of `Supervisor.run()`'s
+    `.invoke()` - same supervisor, same LangGraph graph, same nodes, just
+    observed one stage at a time instead of waiting for the final result -
+    so a caller can show real per-stage progress instead of an opaque wait.
+    `on_progress(trace)`, when given, is called once per stage as it
+    actually completes; nothing here decides what a stage means or when it
+    is "done" - that is still entirely the pipeline's own trace, read the
+    same way `render_progress` already reads a finished one.
+
     Imported lazily so the module can be loaded (and tested) without building
-    agents or touching a provider.
+    agents or touching a provider. This is the one seam every UI test
+    replaces instead of hitting a real provider - keep its signature stable.
     """
     from job_agent.agents import build_supervisor
 
-    return build_supervisor(settings).run(cv_source, jd_source)
+    supervisor = build_supervisor(settings)
+    state = RunContext(
+        cv_text=str(cv_source), jd_text=str(jd_source), trace=supervisor.collector
+    )
+    final_state = None
+    for final_state in supervisor.graph.stream(state, stream_mode="values"):
+        if on_progress is not None:
+            on_progress(final_state["trace"])
+    return RunContext(**final_state)
 
 
 def read_upload(uploaded, pasted: str, directory: Path) -> str:
@@ -319,6 +354,157 @@ def _render_requirement_card(match: RequirementMatch, level: MatchLevel) -> None
                 st.caption(f"💭 {match.reason}")
 
 
+# --- visual summary -----------------------------------------------------
+#
+# Everything below prepares chart data with plain Python from the fit
+# report the scoring agent already produced (`agents/scoring.py`) - no
+# model call, no re-judging, and no new score. `compute_fit_score` and
+# `MATCH_LEVEL_WEIGHT` there are the only place a fit number is ever
+# computed; this only counts and regroups the `RequirementMatch`es and
+# `RoleRequirement`s that already exist on the RunContext.
+
+
+def match_level_counts(matches: list[RequirementMatch]) -> dict[MatchLevel, int]:
+    """How many requirements landed at each match level - a plain tally
+    over the scorer's own output, in the fixed order every match level
+    already renders in elsewhere on this page (see MATCH_LEVEL_DISPLAY)."""
+    counts = {level: 0 for level in MatchLevel}
+    for match in matches:
+        counts[match.match_level] += 1
+    return counts
+
+
+def requirement_pairs(
+    job: JobDescription | None, report: FitReport
+) -> list[tuple[RoleRequirement, RequirementMatch]]:
+    """Each requirement paired with its own judgement, so a must-have /
+    nice-to-have split can be computed.
+
+    Safe to zip by position: `ScoringAgent._resolve_matches` always builds
+    exactly one `RequirementMatch` per `RoleRequirement`, in the job's own
+    order - a requirement the model skipped still appears, as missing. If
+    `job` is unavailable (should not happen once scoring has run, but the
+    UI must not assume it), this returns [] rather than guessing which
+    requirement is which.
+    """
+    if job is None:
+        return []
+    return list(zip(job.requirements, report.requirement_matches, strict=False))
+
+
+def must_have_breakdown(
+    job: JobDescription | None, report: FitReport
+) -> dict[str, dict[MatchLevel, int]]:
+    """Match-level counts split by the JD's own must-have flag - the same
+    tally as `match_level_counts`, just grouped instead of pooled."""
+    pairs = requirement_pairs(job, report)
+    return {
+        "Must-have": match_level_counts([m for r, m in pairs if r.must_have]),
+        "Nice-to-have": match_level_counts([m for r, m in pairs if not r.must_have]),
+    }
+
+
+_LEVEL_ORDER = (
+    MatchLevel.match,
+    MatchLevel.partial,
+    MatchLevel.related,
+    MatchLevel.missing,
+)
+
+
+def overall_match_chart_data(report: FitReport) -> list[dict]:
+    """One row per match level - the whole-report breakdown (requirement 2)."""
+    counts = match_level_counts(report.requirement_matches)
+    return [
+        {"Status": _MATCH_LEVEL_LABEL[level], "Count": counts[level]}
+        for level in _LEVEL_ORDER
+    ]
+
+
+def must_have_chart_data(job: JobDescription | None, report: FitReport) -> list[dict]:
+    """Long-format rows (one per status x category) for a grouped chart -
+    must-have performance next to nice-to-have performance (requirement 3)."""
+    breakdown = must_have_breakdown(job, report)
+    return [
+        {
+            "Status": _MATCH_LEVEL_LABEL[level],
+            "Count": breakdown[category][level],
+            "Requirement type": category,
+        }
+        for category in ("Must-have", "Nice-to-have")
+        for level in _LEVEL_ORDER
+    ]
+
+
+def requirement_table_rows(
+    report: FitReport, job: JobDescription | None
+) -> list[dict]:
+    """One row per requirement: what it was, and how it scored - a compact
+    companion to the detailed cards `render_fit_report` already shows
+    below, not a replacement for their evidence and reasoning."""
+    pairs = requirement_pairs(job, report)
+    if pairs:
+        return [
+            {
+                "Requirement": match.requirement,
+                "Type": "Must-have" if requirement.must_have else "Nice-to-have",
+                "Status": _MATCH_LEVEL_LABEL[match.match_level],
+            }
+            for requirement, match in pairs
+        ]
+    # No job to pair against - still show a status per requirement rather
+    # than nothing at all.
+    return [
+        {
+            "Requirement": match.requirement,
+            "Status": _MATCH_LEVEL_LABEL[match.match_level],
+        }
+        for match in report.requirement_matches
+    ]
+
+
+def render_visual_summary(context: RunContext) -> None:
+    """A chart-based summary of the same fit report `render_fit_report`
+    shows in detail below - the overall score, a match-level breakdown, a
+    must-have vs. nice-to-have comparison, and a compact per-requirement
+    table. Every value comes from `context.fit_report`/`context.job`
+    through the deterministic helpers above; nothing here is shown when
+    there is no result to summarise (see `render_last_run`/`render_results`,
+    which only ever call this once a run has actually completed)."""
+    report = context.fit_report
+    if report is None:
+        return
+
+    st.subheader("📊 Visual Summary")
+
+    with st.container(horizontal=True):
+        st.metric("Overall fit", f"{report.overall_fit:.0%}", border=True)
+        counts = match_level_counts(report.requirement_matches)
+        st.metric("Matched", counts[MatchLevel.match], border=True)
+        st.metric("Missing", counts[MatchLevel.missing], border=True)
+
+    if not report.requirement_matches:
+        st.caption("No requirements were judged for this run.")
+        return
+
+    with st.container(horizontal=True):
+        with st.container(border=True):
+            st.markdown("**Requirement match breakdown**")
+            st.bar_chart(overall_match_chart_data(report), x="Status", y="Count")
+        with st.container(border=True):
+            st.markdown("**Must-have vs. nice-to-have**")
+            st.bar_chart(
+                must_have_chart_data(context.job, report),
+                x="Status",
+                y="Count",
+                color="Requirement type",
+            )
+
+    with st.container(border=True):
+        st.markdown("**Every requirement at a glance**")
+        st.dataframe(requirement_table_rows(report, context.job), hide_index=True)
+
+
 def render_fit_report(context: RunContext) -> None:
     report = context.fit_report
     if report is None:
@@ -378,30 +564,55 @@ def render_research(context: RunContext) -> None:
                 st.markdown(f"- [{source.title}]({source.url})")
 
 
-def render_documents(context: RunContext) -> None:
+def tailored_cv_text(tailored: TailoredCV) -> str:
+    """The one source of "the tailored CV" as text - shown on screen,
+    offered as a download, and (see `save_tailored_cv_version`) what a saved
+    tailored CV version stores, so all three always agree.
+
+    `full_text` (assembled by the writing agent itself, see
+    `agents/writing.py`'s `assemble_full_cv`) is the complete tailored CV,
+    not just the highlighted bullets - what gets archived is an actual CV a
+    user could submit, not a highlight reel.
+    """
+    return tailored.full_text
+
+
+def render_documents(context: RunContext, settings: Settings) -> None:
     st.subheader("📝 Tailored CV")
     if context.tailored_cv is None:
-        st.warning(
-            "No tailored CV was produced. The grounding check could not verify "
-            "a draft, so your original CV stands."
-        )
+        if settings.skip_tailoring:
+            st.info(
+                "Tailoring was skipped for this run (SKIP_TAILORING is set) - "
+                "no tailored CV was attempted."
+            )
+        else:
+            st.warning(
+                "No tailored CV was produced. The grounding check could not verify "
+                "a draft, so your original CV stands."
+            )
     else:
         with st.container(border=True):
-            st.markdown("\n".join(f"- {b}" for b in context.tailored_cv.bullets))
+            st.markdown(tailored_cv_text(context.tailored_cv))
             if context.tailored_cv.omitted:
                 st.caption(
                     "De-prioritised: " + "; ".join(context.tailored_cv.omitted)
                 )
         st.download_button(
             "Download tailored CV",
-            data="\n".join(f"- {b}" for b in context.tailored_cv.bullets),
+            data=tailored_cv_text(context.tailored_cv),
             file_name="tailored_cv.txt",
             mime="text/plain",
         )
 
     st.subheader("✉️ Cover Letter")
     if context.cover_letter is None:
-        st.warning("No cover letter was produced.")
+        if settings.skip_tailoring:
+            st.info(
+                "Tailoring was skipped for this run (SKIP_TAILORING is set) - "
+                "no cover letter was attempted."
+            )
+        else:
+            st.warning("No cover letter was produced.")
     else:
         with st.container(border=True):
             st.markdown(context.cover_letter.body)
@@ -480,24 +691,122 @@ def render_results(context: RunContext, settings: Settings) -> None:
     for warning in context.warnings:
         st.warning(warning)
 
-    render_progress(context)
+    # The technical "Pipeline" section (stage timings, model/tool call counts,
+    # token totals) is deliberately not shown to the end user - product
+    # decision, not a pipeline change. `render_progress` and `run_totals`
+    # are untouched and still fully correct; nothing here calls them. The
+    # pipeline itself keeps recording every stage in `context.trace` exactly
+    # as before - only this page's display of it is gone.
+    render_visual_summary(context)
     st.divider()
     render_fit_report(context)
     st.divider()
     render_research(context)
     st.divider()
-    render_documents(context)
+    render_documents(context, settings)
     st.divider()
     render_validation(context)
     st.divider()
     render_application(context, settings)
 
 
+# --- processing / loading page ------------------------------------------------
+
+# Friendlier phrasing for the loading page specifically - keyed to the same
+# stage identifiers STAGES already uses, so this is purely a display-label
+# choice, never a second source of truth about what the stages are.
+_PROCESSING_LABELS: dict[str, str] = {
+    "parse_cv": "Preparing CV",
+    "parse_jd": "Reading job description",
+    "research": "Researching company",
+    "score_fit": "Analyzing candidate-job fit",
+    "write_application": "Creating tailored CV and cover letter",
+    "track_application": "Saving results",
+}
+
+
+def render_processing(cv_source: str, jd_source: str, settings: Settings) -> RunContext:
+    """The Loading / Processing page.
+
+    Every row starts pending and only turns into a checkmark once that stage
+    has actually finished, reconstructed live from the run's own trace via
+    `run_pipeline`'s `on_progress` hook - never marked done ahead of the
+    pipeline itself, and never shown at all for a stage this run will never
+    execute (the tailoring row is omitted entirely when
+    `settings.skip_tailoring` is set, since the graph then has no
+    write_application node to complete).
+    """
+    st.subheader("Step 3 of 4 — ⏳ Analyzing your application")
+    st.caption(
+        "This takes about a minute. Each stage below updates as it actually "
+        "finishes - nothing is marked done ahead of time."
+    )
+
+    stages = [
+        (name, _PROCESSING_LABELS[name])
+        for name, _ in STAGES
+        if name != "write_application" or not settings.skip_tailoring
+    ]
+    with st.container(border=True):
+        rows = {name: st.empty() for name, _ in stages}
+        for name, label in stages:
+            rows[name].markdown(f"⏳ {label}")
+
+        def on_progress(trace) -> None:
+            done = {event.name for event in trace.events}
+            for name, label in stages:
+                rows[name].markdown(f"✅ {label}" if name in done else f"⏳ {label}")
+
+        return run_pipeline(cv_source, jd_source, settings, on_progress)
+
+
 # --- running -----------------------------------------------------------------
 
 
+def save_tailored_cv_version(
+    context: RunContext, settings: Settings, user: User, baseline: BaselineCV | None
+) -> None:
+    """Archive this run's tailored CV, if it actually produced one.
+
+    `context.tailored_cv` is only ever non-None when the writing agent's own
+    grounding loop returned a clean draft (`WritingAgent.write` raises
+    `RetryExhaustedError` instead of returning anything else, and the
+    supervisor leaves it as None on that failure or when SKIP_TAILORING
+    omits the write_application node entirely - see `supervisor._write`) -
+    so this one check is what already keeps an invalid or skipped tailoring
+    out of the archive, with no separate validity check needed here.
+
+    `cv_text` is `tailored.full_text` - the complete tailored CV, not just
+    its highlighted bullets (see `tailored_cv_text`). `baseline` (the same
+    object "My Profile" already fetched for this run) is recorded only as
+    its `updated_at` - which baseline *snapshot* this version was tailored
+    from - never its text, so the baseline CV itself is still never touched
+    or copied here, only referenced.
+
+    A new row every time, never a replace: the same `TailoredCVVersionStore`
+    guarantee that lets a second Sephora application and a first Nexus
+    application both keep their own version. The baseline CV is untouched -
+    nothing here ever calls `BaselineCVStore.save`.
+    """
+    if context.tailored_cv is None:
+        return
+    TailoredCVVersionStore(settings.tracker_db_path).save(
+        user_id=user.id,
+        company=context.tailored_cv.company,
+        role=context.tailored_cv.role,
+        cv_text=tailored_cv_text(context.tailored_cv),
+        baseline_cv_updated_at=baseline.updated_at if baseline is not None else None,
+    )
+
+
 def start_run(
-    cv_upload, cv_pasted: str, jd_upload, jd_pasted: str, settings: Settings
+    cv_upload,
+    cv_pasted: str,
+    jd_upload,
+    jd_pasted: str,
+    settings: Settings,
+    user: User,
+    baseline: BaselineCV | None = None,
 ) -> None:
     """Run the pipeline once and record the outcome in session state.
 
@@ -520,21 +829,27 @@ def start_run(
         st.session_state.pop(RESULT_KEY, None)
         st.session_state.pop(ERROR_KEY, None)
 
-        with st.spinner("Running the pipeline - this takes about a minute..."):
-            try:
-                context = run_pipeline(cv, jd, settings)
-            except Exception as exc:  # noqa: BLE001 - the UI must not crash
-                # The redacted message, not the exception: nothing carrying a
-                # credential is worth keeping across reruns.
-                st.session_state[ERROR_KEY] = safe_error(exc, settings)
-                return
+        try:
+            context = render_processing(cv, jd, settings)
+        except Exception as exc:  # noqa: BLE001 - the UI must not crash
+            # The redacted message, not the exception: nothing carrying a
+            # credential is worth keeping across reruns.
+            st.session_state[ERROR_KEY] = safe_error(exc, settings)
+            return
 
+    save_tailored_cv_version(context, settings, user, baseline)
     st.session_state[RESULT_KEY] = context
 
 
 def render_last_run(settings: Settings) -> None:
     """Whatever the most recent run produced - on every rerun, not just the
-    one that started it. Before the first run there is nothing to show."""
+    one that started it. Before the first run there is nothing to show.
+
+    This is the Results page. The entry form above stays visible and
+    editable throughout (see `start_run`'s own reasoning for why a stray
+    interaction must never destroy a result) - "Start a new analysis" is an
+    additional, explicit way to clear it without touching the inputs.
+    """
     error = st.session_state.get(ERROR_KEY)
     if error is not None:
         st.error("The run could not be completed. Nothing was saved.\n\n" + error)
@@ -545,48 +860,206 @@ def render_last_run(settings: Settings) -> None:
         return
 
     st.success("Run complete.")
+    st.subheader("Step 4 of 4 — 📊 Results")
+    if st.button("🔄 Start a new analysis", key="start_new_analysis"):
+        st.session_state.pop(RESULT_KEY, None)
+        st.session_state.pop(ERROR_KEY, None)
+        st.rerun()
     render_results(context, settings)
 
 
 # --- page --------------------------------------------------------------------
 
 
-def main() -> None:
-    st.set_page_config(page_title="Job Application Agent", page_icon="📄")
-    st.title("Job Application Agent")
-    st.caption(
-        "Paste a CV and a job description. The agent researches the company, "
-        "scores your fit, and tailors your material using only what your CV "
-        "already says."
+def _inject_background_style() -> None:
+    """A soft pastel wash behind the app, light-mode only.
+
+    Purely decorative - no element structure, text, or behavior changes, so
+    it has no effect on anything a test inspects. Streamlit itself has no
+    API for a textured/gradient background, only flat theme colors, so this
+    is the one deliberate, narrow use of injected CSS in the app - scoped to
+    `prefers-color-scheme: light` so a viewer in dark mode keeps Streamlit's
+    normal dark background instead of a jarring bright wash.
+    """
+    st.markdown(
+        """
+        <style>
+        @media (prefers-color-scheme: light) {
+        [data-testid="stAppViewContainer"] {
+        background:
+        radial-gradient(circle at 12% 18%, rgba(255,179,198,.55), transparent 42%),
+        radial-gradient(circle at 82% 12%, rgba(255,200,210,.45), transparent 40%),
+        radial-gradient(circle at 78% 58%, rgba(168,214,255,.45), transparent 45%),
+        radial-gradient(circle at 8% 68%, rgba(168,214,255,.4), transparent 45%),
+        radial-gradient(circle at 55% 80%, rgba(255,240,175,.55), transparent 50%),
+        radial-gradient(circle at 42% 42%, rgba(214,190,255,.35), transparent 45%),
+        #fdfbf5;
+        background-attachment: fixed;
+        }
+        [data-testid="stHeader"] { background: transparent; }
+        }
+        /* Hide only the Deploy button - the main menu ("stMainMenu") and the
+           rest of the toolbar are untouched, in both light and dark mode. */
+        [data-testid="stAppDeployButton"] { display: none; }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    settings = load_settings()
-    render_sidebar(settings)
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Your CV")
-        cv_file = st.file_uploader(
-            "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="cv_file"
+def render_tailored_cv_history(settings: Settings, user: User) -> None:
+    """"My Tailored CVs": every version this user's baseline has been
+    tailored into, one per completed application, newest first.
+
+    Deliberately separate from "My Profile" above: that section is the one
+    original baseline CV (see `profile.render_baseline_cv_section`); this is
+    the read-only archive of what has been generated *from* it - a Sephora
+    application and a Nexus application each keep their own row (see
+    `TailoredCVVersionStore`), and neither this list nor a run that produces
+    it ever writes back to the baseline.
+    """
+    st.subheader("📄 My Tailored CVs", anchor="my-tailored-cvs")
+    versions = TailoredCVVersionStore(settings.tracker_db_path).list_for_user(user.id)
+    if not versions:
+        st.caption("No tailored CVs yet - complete an analysis to generate one.")
+        return
+
+    for version in versions:
+        with st.expander(f"📄 {version.company}"):
+            st.markdown(f"**{version.role}**")
+            st.caption(f"Created: {version.created_at.strftime('%Y-%m-%d %H:%M')}")
+            if version.baseline_cv_updated_at is not None:
+                st.caption(
+                    "Tailored from your baseline CV as of "
+                    f"{version.baseline_cv_updated_at.strftime('%Y-%m-%d %H:%M')}."
+                )
+            st.markdown(version.cv_text)
+            st.download_button(
+                "Download this tailored CV",
+                data=version.cv_text,
+                file_name=f"tailored_cv_{version.company}_{version.id}.txt",
+                mime="text/plain",
+                key=f"download_tailored_cv_{version.id}",
+            )
+
+
+def render_tailored_cv_sidebar_link() -> None:
+    """A quick jump to "My Tailored CVs" from the sidebar, next to the
+    account panel - a plain in-page anchor link to the same section
+    `render_tailored_cv_history` renders further down (see its
+    `anchor="my-tailored-cvs"`), not a second copy of that content and not
+    a rerun: clicking it just scrolls the existing page."""
+    with st.sidebar:
+        st.markdown("[📄 My Tailored CVs](#my-tailored-cvs)")
+
+
+def main() -> None:
+    st.set_page_config(page_title="Job Application Agent", page_icon="📄")
+    _inject_background_style()
+
+    settings = load_settings()
+    user = auth.render_gate(settings)
+    if user is None:
+        # Not signed in - the gate above has already rendered the login/
+        # signup screen. Nothing else in this app is reachable until then.
+        return
+
+    st.title("Job Application Agent")
+    st.caption(
+        "Save your CV once as your baseline, then add a job description. "
+        "The agent researches the company, scores your fit, and tailors "
+        "your material using only what your baseline CV already says."
+    )
+
+    auth.render_account_sidebar(user)
+    render_tailored_cv_sidebar_link()
+    # The technical "Configuration" sidebar (provider/model names, which
+    # keys are set, the tracker db filename) is deliberately not shown to
+    # the end user - product decision, not a settings change. `render_sidebar`
+    # is untouched and still fully correct; nothing here calls it. The
+    # sidebar now shows only the account panel above (who is signed in, and
+    # the way out).
+
+    baseline = profile.render_baseline_cv_section(settings, user)
+    st.divider()
+
+    # Once a run has completed, the Entry page steps back into a collapsed
+    # "start over" section instead of staying front-and-center next to the
+    # Results below it - the four stages should read as a guided flow, not
+    # a form and a report permanently glued together. Collapsing changes
+    # nothing about what runs or when: the widgets inside execute exactly as
+    # before (a collapsed `st.expander` still renders its contents on every
+    # rerun, only their visibility is toggled), so editing the job
+    # description and clicking Start Analysis again still replaces the
+    # result exactly as it always has - see `render_entry_page`/`start_run`.
+    # Only a *result* (not a failed run) triggers this: on error the user is
+    # still mid-Entry, most likely fixing what they just typed.
+    if st.session_state.get(RESULT_KEY) is not None:
+        with st.expander("✏️ Start a new analysis", expanded=False):
+            render_entry_page(settings, baseline, user)
+    else:
+        render_entry_page(settings, baseline, user)
+
+    render_last_run(settings)
+    st.divider()
+    render_tailored_cv_history(settings, user)
+
+
+def render_entry_page(
+    settings: Settings, baseline: BaselineCV | None, user: User
+) -> None:
+    """The Entry page: a job description, plus whichever CV source applies.
+
+    Once a baseline CV exists (see "My Profile" above), this page never asks
+    for a CV again - the whole point of the baseline system is that the same
+    original CV is reused for every application, not re-supplied per job.
+    Always rendered, even once a result exists further down - editing the
+    job description here and clicking Start Analysis again is how a result
+    gets replaced (see `start_run`); hiding this after a result appeared
+    would break that and give no way back to it.
+    """
+    st.subheader("Step 2 of 4 — 📥 Job Application")
+
+    if baseline is None:
+        st.caption(
+            "Save a baseline CV in **My Profile** above before running your "
+            "first analysis - every application is tailored from it."
         )
-        cv_pasted = st.text_area("...or paste it", height=220, key="cv_text")
-    with right:
-        st.subheader("Job description")
-        jd_file = st.file_uploader(
-            "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="jd_file"
+    else:
+        st.caption(
+            "Your baseline CV (saved "
+            f"{baseline.updated_at.strftime('%Y-%m-%d %H:%M')}) is used "
+            "automatically - manage it in **My Profile** above. Tailoring "
+            "for this job never changes your baseline. Upload a job "
+            "description file (.txt, .md or .pdf) or paste the text "
+            "directly, then click **Start Analysis** below."
         )
-        jd_pasted = st.text_area("...or paste it", height=220, key="jd_text")
+
+    st.markdown("**Job description** — required")
+    jd_file = st.file_uploader(
+        "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="jd_file"
+    )
+    jd_pasted = st.text_area("...or paste it", height=220, key="jd_text")
 
     st.divider()
 
     # Better to refuse the click than to spend a minute failing at it.
     blockers = missing_requirements(settings)
+    if baseline is None:
+        blockers = [*blockers, "A baseline CV is required before a run can start."]
     for blocker in blockers:
         st.error(blocker)
     if blockers:
-        st.caption("Set the missing values in your .env file, then restart the app.")
+        st.caption(
+            "Set the missing values in your .env file, or save a baseline "
+            "CV above, then try again."
+        )
 
-    if st.button("Run application", type="primary", disabled=bool(blockers)):
-        start_run(cv_file, cv_pasted, jd_file, jd_pasted, settings)
-
-    render_last_run(settings)
+    if st.button(
+        "🚀 Start Analysis",
+        type="primary",
+        disabled=bool(blockers),
+        key="start_analysis",
+    ):
+        cv_text = baseline.cv_text if baseline is not None else ""
+        start_run(None, cv_text, jd_file, jd_pasted, settings, user, baseline)

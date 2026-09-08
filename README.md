@@ -34,6 +34,24 @@ python -m streamlit run job_agent/app/streamlit_app.py
 Opens at `http://localhost:8501`. Paste or upload a CV and a job description, then click
 **Run application**.
 
+## Run it with Docker
+
+```bash
+cp .env.example .env   # fill in your keys first, same as above
+docker compose up --build
+```
+
+Opens at `http://localhost:8501`. The SQLite tracker db and trace log persist across
+restarts in `./data` on the host; `.env` is passed in at container start, never baked
+into the image.
+
+The MCP server isn't part of `docker compose up` (it talks over stdio, not a network
+port, so it isn't a long-running service) - run it on demand instead:
+
+```bash
+docker compose run --rm mcp
+```
+
 ## Run the tests
 
 ```bash

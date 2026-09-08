@@ -593,3 +593,12 @@ def test_the_production_factory_wires_sqlite_and_web_search(settings):
     assert set(supervisor.tools.names()) == {"parse_cv", "parse_jd", "web_search"}
     assert supervisor.collector is not None
     assert isinstance(supervisor.writing, WritingAgent)
+
+
+def test_skip_tailoring_setting_builds_a_supervisor_with_no_writer(settings):
+    from dataclasses import replace
+
+    supervisor = build_supervisor(replace(settings, skip_tailoring=True))
+
+    assert supervisor.writing is None
+    assert "write_application" not in supervisor.graph.get_graph().nodes

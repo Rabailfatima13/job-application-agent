@@ -132,7 +132,21 @@ class WritingDraft(BaseModel):
 
 WRITING_SYSTEM_PROMPT = """\
 You tailor an existing CV to one job and draft a cover letter. Everything you \
-write must already be true of this candidate according to their CV EVIDENCE.
+write must already be true of this candidate according to their CV EVIDENCE. \
+The result must read as the SAME candidate's CV, adapted for this one job - \
+not a new CV. You are choosing what to emphasise and how to phrase it, never \
+what is true: make small, targeted changes to an existing document, not a \
+rewrite from scratch.
+
+Read WHAT THE ROLE ASKS FOR below and check it against every line in CV \
+EVIDENCE, not only what WORTH FOREGROUNDING lists (that list is capped and \
+may leave out a real match). When a requirement is already supported \
+somewhere in the evidence but is not prominent, bring that evidence forward \
+and, if it helps make the match obvious, reword it slightly to use the \
+posting's own term for the same real thing - the underlying fact does not \
+change, only its position and phrasing do. A requirement with no supporting \
+evidence anywhere stays unmentioned; do not paper over it with related-\
+sounding wording.
 
 You MAY:
 - reorder and re-prioritise the evidence so the most relevant comes first
@@ -231,7 +245,7 @@ class WritingAgent(BaseAgent):
             draft = self._draft(cv, job, report, brief, grounding_feedback)
             last_result = self._ground(draft, cv, job, brief)
             if last_result.is_clean:
-                return self._build_outputs(draft, job)
+                return self._build_outputs(draft, job, cv)
             grounding_feedback = last_result.feedback()
 
         # Nothing unverified is ever returned: the proposal's fallback (the
@@ -365,7 +379,7 @@ class WritingAgent(BaseAgent):
 
     @staticmethod
     def _build_outputs(
-        draft: WritingDraft, job: JobDescription
+        draft: WritingDraft, job: JobDescription, cv: ParsedCV
     ) -> tuple[TailoredCV, CoverLetter]:
         """Role and company come from the parsed posting, never from the model."""
         return (
@@ -374,9 +388,40 @@ class WritingAgent(BaseAgent):
                 company=job.company,
                 bullets=list(draft.bullets),
                 omitted=list(draft.omitted),
+                full_text=assemble_full_cv(cv, job, draft.bullets),
             ),
             CoverLetter(role=job.role, company=job.company, body=draft.cover_letter),
         )
+
+
+def assemble_full_cv(cv: ParsedCV, job: JobDescription, bullets: list[str]) -> str:
+    """The complete tailored CV - the candidate's own baseline CV, tailored
+    for this role, not a short highlight reel and not a second document.
+
+    `bullets` are already grounded (they come from a `WritingDraft` that
+    passed `_ground`, the same guarantee `TailoredCV` itself relies on) -
+    this makes no model call and adds no new claim, it only re-presents
+    content already verified true of the candidate: their own name, the
+    real CV lines re-ordered and re-emphasised for this role, and their
+    real skills.
+
+    Deliberately excludes what the writer de-prioritised (`WritingDraft.
+    omitted`, still shown separately on the Results page as "De-
+    prioritised") - a *tailored* CV is exactly the candidate's baseline CV
+    with the less relevant material left out for this one application, not
+    everything stitched back in under a second heading. That is also what
+    keeps this to roughly one page: bullets are already bounded to 4-8
+    lines by the writer's own prompt, so a name, a role/company line, those
+    bullets and a skills line comfortably fit on one.
+    """
+    sections: list[str] = []
+    if cv.candidate_name:
+        sections.append(cv.candidate_name)
+    sections.append(f"Tailored for: {job.role} at {job.company}")
+    sections.append("\n".join(f"- {bullet}" for bullet in bullets))
+    if cv.skills:
+        sections.append("Skills: " + ", ".join(cv.skills))
+    return "\n\n".join(sections)
 
 
 def build_writing_prompt(
@@ -392,6 +437,14 @@ def build_writing_prompt(
     model knows what *not* to write about. The candidate's raw CV text is not
     included: the parsed evidence is the authoritative list, and sending the
     raw text invites the model to mine it for half-read details.
+
+    The full evidence list is included even though `recommended_emphasis` is
+    already there: scoring caps that list at 2-5 items (see
+    `scoring.py`'s prompt), so a requirement can be genuinely satisfied by
+    evidence that list left out. The writer needs the complete list to be
+    able to bring such a match forward at all - see the system prompt's own
+    instruction to check every requirement against every evidence line, not
+    only what is flagged here.
     """
     evidence = "\n".join(f"- {e.text}" for e in cv.evidence)
     requirements = "\n".join(
@@ -410,7 +463,9 @@ def build_writing_prompt(
         f"COMPANY: {job.company}\n\n"
         f"WHAT THE ROLE ASKS FOR:\n{requirements}\n\n"
         f"CV EVIDENCE (the only facts you may use about the candidate):\n{evidence}\n\n"
-        f"WORTH FOREGROUNDING (from the fit analysis):\n{emphasis}\n\n"
+        f"WORTH FOREGROUNDING (from the fit analysis - not exhaustive; a "
+        "requirement may also be satisfied by evidence not listed here):\n"
+        f"{emphasis}\n\n"
         f"KNOWN GAPS - do not claim these:\n"
         f"{chr(10).join(f'- {gap}' for gap in report.gaps) or '- (none)'}\n\n"
         f"COMPANY FACTS (for the letter only):\n{company_facts}"

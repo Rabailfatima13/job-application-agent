@@ -11,7 +11,7 @@ import pytest
 
 from job_agent.models import ParsedCV
 from job_agent.observability import TraceCollector
-from job_agent.tools.parsing import is_supported_by, parse_cv
+from job_agent.tools.parsing import CV_MAX_TOKENS, is_supported_by, parse_cv
 
 FIXTURE_EXTRACTION = {
     "candidate_name": "Mahnoor Rauf",
@@ -131,6 +131,23 @@ def test_parsing_runs_on_the_cheap_tier_and_is_traced(make_router, sample_cv_tex
     assert event.kind == "model"
     assert event.name == "model:light:parse_cv"
     assert event.input_tokens == 10 and event.output_tokens == 5
+
+
+def test_the_request_stays_under_groqs_output_token_rate_limit(
+    make_router, sample_cv_text
+):
+    """Regression: a live run against qwen/qwen3.8-27b (the light-tier
+    model) was rejected outright by Groq's 1000 output-tokens-per-minute
+    cap - the request fails before it runs at all once max_tokens reaches
+    1000, regardless of the actual reply size. CV_MAX_TOKENS must stay
+    safely under that ceiling."""
+    router = make_router(light_replies=[json.dumps(FIXTURE_EXTRACTION)])
+
+    parse_cv(sample_cv_text, router)
+
+    assert CV_MAX_TOKENS < 1000
+    calls = router.for_step("parse_cv").calls
+    assert calls[0]["max_tokens"] == CV_MAX_TOKENS
 
 
 def test_reads_a_cv_from_a_file_path(make_router, fixtures_dir, sample_cv_text):

@@ -26,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 
 from ..config import Settings
 from ..llm import ModelRouter
+from ..memory.research_cache import CompanyResearchCache
 from ..memory.session import RunContext
 from ..memory.tracker import ApplicationTracker, SQLiteApplicationTracker
 from ..models import ApplicationRecord, ApplicationStatus
@@ -260,12 +261,24 @@ def build_supervisor(
     tracker = tracker or SQLiteApplicationTracker(settings.tracker_db_path)
     search_client = WebSearchClient.from_settings(settings)
     registry = build_default_registry(router, collector, search_client=search_client)
+    # Same tracker database file, one more table - not a second store to
+    # wire up or a second thing that can go out of sync with it.
+    research_cache = CompanyResearchCache(
+        settings.tracker_db_path, ttl_hours=settings.research_cache_ttl_hours
+    )
 
     return Supervisor(
         tools=registry,
-        research=ResearchAgent(router, tools=registry, collector=collector),
+        research=ResearchAgent(
+            router, tools=registry, collector=collector, cache=research_cache
+        ),
         scoring=ScoringAgent(router, collector=collector),
-        writing=WritingAgent(router, collector=collector),
+        # settings.skip_tailoring reuses the same "no writer injected" shape
+        # Supervisor already supports (see _build_graph): the graph simply
+        # omits the write_application node, exactly as it always could.
+        writing=None
+        if settings.skip_tailoring
+        else WritingAgent(router, collector=collector),
         tracker=tracker,
         collector=collector,
     )

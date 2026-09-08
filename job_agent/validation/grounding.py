@@ -126,11 +126,22 @@ def split_sentences(text: str) -> list[str]:
     return [part.strip() for part in _SENTENCE_SPLIT.split(text) if part.strip()]
 
 
+# A live tailoring run had a writer reword the CV's own "1000+" as "1,000+" -
+# a real, grounded number, just re-formatted with a thousands separator. `\d+`
+# on "1,000" finds two runs ("1", "000"), neither of which matches the
+# source's single "1000", so a truthful claim was rejected as an invented
+# figure. Stripping a comma only when it sits directly between two digits
+# fixes exactly that formatting difference without touching any other use of
+# a comma (list separators, "Python, SQL", are untouched - a comma there is
+# never between two digits).
+_THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d)")
+
+
 def _normalise(text: str) -> str:
     replaced = text
     for word, digit in _NUMBER_WORDS.items():
         replaced = re.sub(rf"\b{word}\b", digit, replaced, flags=re.IGNORECASE)
-    return replaced
+    return _THOUSANDS_SEPARATOR.sub("", replaced)
 
 
 def numbers_in(text: str) -> set[str]:

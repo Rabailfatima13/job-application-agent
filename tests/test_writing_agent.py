@@ -13,6 +13,7 @@ import pytest
 from job_agent.agents import WritingAgent
 from job_agent.agents.writing import (
     WRITING_SYSTEM_PROMPT,
+    assemble_full_cv,
     build_writing_prompt,
     is_letter_boilerplate,
     letter_claims,
@@ -171,6 +172,169 @@ def test_the_writing_runs_on_the_heavy_tier(make_router, cv, job, report):
 
     assert len(router.client("heavy").calls) == 1
     assert router.client("light").calls == []
+
+
+# --- the complete tailored CV (full_text) -------------------------------------
+#
+# `bullets` alone was a highlight reel, not a CV a user could actually
+# archive or download. `full_text` (assembled by `assemble_full_cv`, called
+# from `_build_outputs`) is the artifact meant to answer "give me the actual
+# tailored CV" - these tests are about that artifact's shape and content,
+# not about grounding (already covered above and unaffected by this).
+
+
+def test_a_tailored_cv_is_generated_from_the_original_cv_and_the_jd(
+    make_router, cv, job, report, brief
+):
+    """The end-to-end contract: original CV + JD (via `report`, itself
+    scored from the JD) in, a complete tailored CV out."""
+    agent = agent_for(make_router, [json.dumps(GOOD_DRAFT)])
+
+    tailored, _ = agent.write(cv, job, report, brief)
+
+    assert tailored.full_text != ""
+    assert tailored.role == job.role
+    assert tailored.company == job.company
+
+
+def test_the_tailored_cv_is_actually_tailored_not_the_original_verbatim(
+    make_router, cv, job, report
+):
+    """"Tailored" means re-ordered/re-emphasised for this role, not the
+    original CV text reproduced unchanged - the assembled document must
+    differ from the source CV's own raw text."""
+    agent = agent_for(make_router, [json.dumps(GOOD_DRAFT)])
+
+    tailored, _ = agent.write(cv, job, report)
+
+    assert tailored.full_text != cv.raw_text
+    # But still grounded: every bullet is real content from the CV.
+    for bullet in tailored.bullets:
+        assert bullet in tailored.full_text
+
+
+def test_the_full_text_is_a_complete_document_not_just_the_bullets(
+    make_router, cv, job, report
+):
+    """Requirement: "not just suggestions, snippets, or a cover letter" -
+    the complete CV includes the role/company context and the candidate's
+    own skills alongside the highlighted bullets, not only a bare bullet
+    list."""
+    agent = agent_for(make_router, [json.dumps(GOOD_DRAFT)])
+
+    tailored, _ = agent.write(cv, job, report)
+
+    bare_bullets = "\n".join(f"- {b}" for b in tailored.bullets)
+    assert tailored.full_text != bare_bullets
+    assert len(tailored.full_text) > len(bare_bullets)
+    assert job.role in tailored.full_text
+    assert job.company in tailored.full_text
+    assert cv.candidate_name in tailored.full_text
+    for skill in cv.skills:
+        assert skill in tailored.full_text
+
+
+def test_the_full_text_leaves_out_deprioritised_experience(make_router, cv, job, report):
+    """A *tailored* CV is the candidate's baseline CV with the less
+    relevant material left out for this one application - not everything
+    stitched back in under a second heading. `omitted` stays on `TailoredCV`
+    for the Results page's separate "De-prioritised" caption, but it must
+    not reappear inside the archived/downloaded document itself."""
+    agent = agent_for(make_router, [json.dumps(GOOD_DRAFT)])
+
+    tailored, _ = agent.write(cv, job, report)
+
+    assert tailored.omitted == ["BS Computer Science"]  # still tracked...
+    assert "BS Computer Science" not in tailored.full_text  # ...but not archived
+    assert "Additional Experience" not in tailored.full_text
+
+
+def test_assemble_full_cv_includes_the_candidate_name_when_present(job):
+    cv_with_name = ParsedCV(candidate_name="Ada Lovelace", raw_text="...", evidence=[])
+
+    text = assemble_full_cv(cv_with_name, job, ["A bullet."])
+
+    assert text.startswith("Ada Lovelace")
+
+
+def test_assemble_full_cv_omits_the_name_line_when_absent(job):
+    cv_without_name = ParsedCV(candidate_name=None, raw_text="...", evidence=[])
+
+    text = assemble_full_cv(cv_without_name, job, ["A bullet."])
+
+    assert "None" not in text
+    assert text.startswith("Tailored for:")
+
+
+def test_assemble_full_cv_includes_every_bullet(job):
+    cv_ = ParsedCV(candidate_name="Ada", raw_text="...", evidence=[])
+
+    text = assemble_full_cv(cv_, job, ["First bullet.", "Second bullet."])
+
+    assert "First bullet." in text
+    assert "Second bullet." in text
+
+
+def test_assemble_full_cv_includes_skills_when_present(job):
+    cv_with_skills = ParsedCV(
+        candidate_name="Ada", raw_text="...", evidence=[], skills=["Python", "SQL"]
+    )
+
+    text = assemble_full_cv(cv_with_skills, job, ["A bullet."])
+
+    assert "Python" in text
+    assert "SQL" in text
+
+
+def test_assemble_full_cv_never_includes_deprioritised_experience(job):
+    """Tailoring means leaving the less-relevant material out for this one
+    application, not stitching it back in under a second heading - which
+    would also work against staying to roughly one page."""
+    cv_ = ParsedCV(candidate_name="Ada", raw_text="...", evidence=[])
+
+    text = assemble_full_cv(cv_, job, ["A bullet."])
+
+    assert "Additional Experience" not in text
+
+
+def test_assemble_full_cv_never_calls_the_model(job):
+    """Deterministic assembly only - no new fabrication surface. Passing a
+    plain `ParsedCV`/`JobDescription` (no router, no stub) and getting a
+    result back at all proves no model call happened."""
+    cv_ = ParsedCV(candidate_name="Ada", raw_text="...", evidence=[])
+
+    text = assemble_full_cv(cv_, job, ["A bullet."])
+
+    assert isinstance(text, str)
+
+
+def test_assemble_full_cv_stays_roughly_one_page(job):
+    """`bullets` is already bounded to 4-8 lines by the writer's own prompt
+    (see WRITING_SYSTEM_PROMPT) - a name, a role/company line, up to 8
+    realistic bullets and a skills line should comfortably total well under
+    a printed page's ~500-600 words, now that de-prioritised experience is
+    no longer appended (see `test_assemble_full_cv_never_includes_
+    deprioritised_experience`)."""
+    cv_ = ParsedCV(
+        candidate_name="Ada Lovelace",
+        raw_text="...",
+        evidence=[],
+        skills=["Python", "SQL", "pandas", "scikit-learn"],
+    )
+    bullets = [
+        "Built a recommendation engine serving 10k daily active users.",
+        "Led a team of 3 engineers delivering a data pipeline rewrite.",
+        "Designed an A/B testing framework adopted across two product teams.",
+        "Reduced model inference latency by 40% through batching and caching.",
+        "Presented quarterly analytics findings to senior leadership.",
+        "Mentored two junior data scientists through their onboarding.",
+        "Automated a reporting pipeline, cutting manual effort by 6 hours/week.",
+        "Migrated legacy SQL reports to a modern dbt-based warehouse.",
+    ]
+
+    text = assemble_full_cv(cv_, job, bullets)
+
+    assert len(text.split()) < 500
 
 
 # --- The prompt --------------------------------------------------------------

@@ -100,7 +100,16 @@ class FitReport(BaseModel):
 class TailoredCV(BaseModel):
     """Writing agent output (Week 7): the same claims, re-ordered and
     re-emphasised for this role. `bullets` must each be grounded in the source
-    CV; `omitted` records what was de-prioritised, never anything invented."""
+    CV; `omitted` records what was de-prioritised, never anything invented.
+
+    `full_text` is the complete tailored CV - assembled deterministically
+    from `bullets`, `omitted`, and the candidate's own name/skills (see
+    `agents/writing.py`'s `assemble_full_cv`), not a second model call - so
+    what a user downloads or saves as a tailored CV version is an actual CV
+    document, not just the handful of highlighted bullets. Defaults to ""
+    only for callers (mostly tests) that build a `TailoredCV` directly
+    without going through the writing agent.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -108,6 +117,10 @@ class TailoredCV(BaseModel):
     company: str
     bullets: list[str] = Field(default_factory=list)
     omitted: list[str] = Field(default_factory=list)
+    full_text: str = Field(
+        default="",
+        description="The complete tailored CV document, ready to save or download.",
+    )
 
 
 class CoverLetter(BaseModel):

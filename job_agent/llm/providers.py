@@ -84,6 +84,23 @@ def _tool_specs_openai(tools) -> list[dict]:
     ]
 
 
+# Reasoning models draw their internal chain-of-thought from the same
+# max_tokens budget as the actual answer, and can silently exhaust it on
+# reasoning alone - a live CVExtraction run returned an empty completion this
+# way. Qwen's family documents reasoning_effort="none" as disabling reasoning
+# entirely; gpt-oss (Groq's other reasoning family) only supports
+# low/medium/high, never "none", so this stays a name-scoped addition rather
+# than a value every openai_compatible model is assumed to accept - an
+# unrecognised field could be rejected outright by a stricter server.
+_REASONING_EFFORT_NONE_MODELS = ("qwen",)
+
+
+def _reasoning_kwargs(model: str) -> dict:
+    if any(name in model.lower() for name in _REASONING_EFFORT_NONE_MODELS):
+        return {"reasoning_effort": "none"}
+    return {}
+
+
 class AnthropicClient:
     """Claude, used for the judgement-heavy steps (scoring, writing)."""
 
@@ -208,6 +225,7 @@ class OpenAICompatibleClient:
                 messages=converted,
                 **({"tools": _tool_specs_openai(tools)} if tools else {}),
                 **json_mode,
+                **_reasoning_kwargs(self.model),
             )
         except BadRequestError as exc:
             text = _json_validate_failure_text(exc)

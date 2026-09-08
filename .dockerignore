@@ -1,0 +1,30 @@
+# Never build with real secrets in the context - docker-compose.yml passes
+# them in at runtime via env_file instead.
+.env
+
+# Local data (the SQLite tracker db, trace log) is bind-mounted at runtime
+# (see docker-compose.yml), never baked into the image.
+data/
+
+# Git, tooling caches, and anything not needed to run the app.
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.vscode/
+.idea/
+.claude/
+
+# Docs, tests, and dev-only files - not part of the running app.
+tests/
+docs/
+README.md
+Prompts.md
+.env.example

@@ -37,8 +37,30 @@ from .document_io import load_document_text
 # Used when a posting genuinely does not name the employer. An explicit
 # placeholder, never a guessed company name.
 UNKNOWN_COMPANY = "Unknown"
+# Same idea for the role: a live run with a terse posting (or a weaker
+# model) had the extractor honestly return null for role - a value the
+# schema rejected outright, exhausting every retry and crashing the whole
+# run with a raw pydantic error on screen instead of degrading like a
+# missing company already does. Required at the JobDescription level (every
+# downstream prompt names a role), so this placeholder is what fills that
+# requirement rather than guessing a title that isn't there.
+UNKNOWN_ROLE = "Unknown Role"
 
-PARSING_MAX_TOKENS = 2048
+# Groq enforces a hard per-minute cap on *requested* output tokens for some
+# models - reasoning-capable ones especially - and a live run against
+# qwen/qwen3.8-27b (the configured light-tier model) was rejected outright
+# with "Requested: 1810 ... Limit: 1000" for a CV/JD extraction call: any
+# single request asking for >=1000 output tokens on that model/account fails
+# before it even runs, regardless of how much of the budget the reply
+# actually uses. A single shared ceiling sized for the larger of the two
+# schemas (evidence-heavy CVs) was pushing both calls over that limit even
+# for a short job posting. Each is now budgeted for what its own JSON
+# schema realistically needs and kept safely under 1000: a JD is a handful
+# of short fields (role, company, a dozen or so short requirement/skill
+# strings), while a CV's evidence list is usually the larger of the two, so
+# it gets more of the remaining headroom.
+JD_MAX_TOKENS = 800
+CV_MAX_TOKENS = 950
 
 
 # --- What the model is asked to return --------------------------------------
@@ -50,7 +72,7 @@ PARSING_MAX_TOKENS = 2048
 class JDExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: str
+    role: str | None = None
     company: str | None = None
     location: str | None = None
     requirements: list[RoleRequirement] = Field(default_factory=list)
@@ -90,7 +112,8 @@ responsibility is something the job involves doing. Keep them separate.
 - Mark a requirement must_have=false when the posting lists it under \
 "nice to have", "preferred", "bonus" or similar; otherwise must_have=true.
 - skills lists concrete technologies, tools and languages named in the posting.
-- Use null for company or location if the posting does not state them.
+- Use null for role, company or location if the posting does not clearly \
+state them.
 
 Reply with a single JSON object and nothing else:
 {"role": str, "company": str|null, "location": str|null,
@@ -153,12 +176,16 @@ def _extract(
     router: ModelRouter,
     collector: TraceCollector | None,
     max_attempts: int,
+    max_tokens: int,
 ):
     """Run one light-tier extraction and return the validated draft.
 
     Retries are handled by `generate_validated`; the feedback it supplies is
     folded into the same user message rather than appended as a second one,
-    because providers require alternating roles.
+    because providers require alternating roles. `max_tokens` is the
+    caller's own budget (see `JD_MAX_TOKENS`/`CV_MAX_TOKENS`) - not a shared
+    default - since the two schemas calling this need different amounts of
+    headroom under the light-tier provider's per-minute output cap.
     """
     client = router.for_step(step)
     tier = router.tier_for(step)
@@ -182,7 +209,7 @@ def _extract(
             result = client.complete(
                 [{"role": "user", "content": content}],
                 system=system_prompt,
-                max_tokens=PARSING_MAX_TOKENS,
+                max_tokens=max_tokens,
             )
             outcome["result"] = result.text
             outcome["input_tokens"] = result.input_tokens
@@ -210,15 +237,24 @@ def parse_jd(
     """Parse a job posting into a validated `JobDescription`.
 
     `source` is the posting text or a path to a .txt/.md/.pdf file. A posting
-    that does not name the employer gets `UNKNOWN_COMPANY` rather than a
-    guess.
+    that does not name the employer gets `UNKNOWN_COMPANY`, and one that does
+    not clearly state a title gets `UNKNOWN_ROLE`, rather than either being
+    guessed - or, as `JDExtraction.role` allowing null now prevents, the
+    whole run crashing because the honest answer was "not stated".
     """
     text = load_document_text(source)
     draft = _extract(
-        "parse_jd", JDExtraction, JD_SYSTEM_PROMPT, text, router, collector, max_attempts
+        "parse_jd",
+        JDExtraction,
+        JD_SYSTEM_PROMPT,
+        text,
+        router,
+        collector,
+        max_attempts,
+        JD_MAX_TOKENS,
     )
     return JobDescription(
-        role=draft.role,
+        role=draft.role or UNKNOWN_ROLE,
         company=draft.company or UNKNOWN_COMPANY,
         raw_text=text,
         requirements=[
@@ -246,7 +282,14 @@ def parse_cv(
     """
     text = load_document_text(source)
     draft = _extract(
-        "parse_cv", CVExtraction, CV_SYSTEM_PROMPT, text, router, collector, max_attempts
+        "parse_cv",
+        CVExtraction,
+        CV_SYSTEM_PROMPT,
+        text,
+        router,
+        collector,
+        max_attempts,
+        CV_MAX_TOKENS,
     )
 
     kept, dropped = [], []

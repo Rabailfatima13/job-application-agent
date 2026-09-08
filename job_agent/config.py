@@ -19,6 +19,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LIGHT = "light"
 HEAVY = "heavy"
 
+# Company research (agents/research.py) changes slowly - funding, headcount,
+# product focus - so a week is a conservative default: long enough to skip a
+# repeat search+summarize for the same employer looked up again soon after,
+# short enough that a cached brief does not go stale for long. Configurable
+# rather than fixed, since how "slowly" is a judgement call a deployment
+# should be free to make differently.
+DEFAULT_RESEARCH_CACHE_TTL_HOURS = 168.0
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -38,6 +46,17 @@ class Settings:
     search_api_key: str | None
     tracker_db_path: Path
     tool_call_log_path: Path
+    # Testing/config escape hatch: skip the writing/tailoring stage entirely
+    # (no tailored CV, no cover letter) so the rest of the pipeline - parsing,
+    # research, scoring, tracking - can be exercised without the extra model
+    # calls and grounding-retry loop the writer costs. Off by default: a
+    # normal run always tailors, exactly as before this field existed.
+    skip_tailoring: bool = False
+    # How long a cached company research result stays valid (see
+    # memory/research_cache.py). Not a bool escape hatch like skip_tailoring -
+    # a real, tunable value, so it gets its own default constant rather than
+    # a bare number repeated in two places.
+    research_cache_ttl_hours: float = DEFAULT_RESEARCH_CACHE_TTL_HOURS
 
 
 def load_settings(env_file: str | Path | None = None) -> Settings:
@@ -52,6 +71,19 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     def path_from(var: str, default: str) -> Path:
         raw = Path(os.getenv(var) or default)
         return raw if raw.is_absolute() else PROJECT_ROOT / raw
+
+    def float_from_env(var: str, default: float) -> float:
+        """A numeric setting from the environment - the default for anything
+        unset, blank, or unparseable, exactly the same "never fail the whole
+        app over one optional setting" spirit `skip_tailoring` already
+        applies to its own env var below."""
+        raw = os.getenv(var)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            return default
 
     return Settings(
         heavy=ModelConfig(
@@ -73,4 +105,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         search_api_key=os.getenv("SEARCH_API_KEY"),
         tracker_db_path=path_from("TRACKER_DB_PATH", "data/applications.db"),
         tool_call_log_path=path_from("TOOL_CALL_LOG_PATH", "data/tool_calls.log"),
+        skip_tailoring=(os.getenv("SKIP_TAILORING") or "").strip().lower()
+        in ("1", "true", "yes"),
+        research_cache_ttl_hours=float_from_env(
+            "RESEARCH_CACHE_TTL_HOURS", DEFAULT_RESEARCH_CACHE_TTL_HOURS
+        ),
     )

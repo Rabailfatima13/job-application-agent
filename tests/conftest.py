@@ -23,7 +23,14 @@ class StubModelClient:
         self.calls: list[dict] = []
 
     def complete(self, messages, system, tools=None, max_tokens=1024) -> ChatResult:
-        self.calls.append({"messages": messages, "system": system, "tools": tools})
+        self.calls.append(
+            {
+                "messages": messages,
+                "system": system,
+                "tools": tools,
+                "max_tokens": max_tokens,
+            }
+        )
         text = self._replies.pop(0) if self._replies else "ok"
         return ChatResult(
             text=text, model=self.name, input_tokens=10, output_tokens=5
