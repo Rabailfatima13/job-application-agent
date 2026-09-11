@@ -10,7 +10,11 @@ LangGraph, Pydantic, and a provider-agnostic model layer (Anthropic or any
 OpenAI-compatible endpoint), with a Streamlit UI and an MCP server exposing the same
 pipeline as tools.
 
-**434 tests passing, 98% coverage, Ruff clean.**
+**588 tests passing, 96% coverage, Ruff clean.**
+
+<p align="center">
+  <img src="docs/screenshots/app_screenshot.png" alt="Job Application Agent sign-in screen" width="620">
+</p>
 
 ## Setup
 
@@ -60,6 +64,32 @@ python -m ruff check .
 ```
 
 No API key needed — every model and search call is stubbed.
+
+## How it works
+
+The supervisor runs a fixed LangGraph `StateGraph` — deterministic routing, no LLM call
+spent deciding what happens next. Writing is the one optional stage, skipped whenever
+fit is below threshold; the retry loop shown here is the actual no-fabrication guard,
+not a diagram simplification.
+
+<p align="center">
+  <img src="docs/diagrams/pipeline_flow.svg" alt="Supervisor pipeline flow diagram" width="100%">
+</p>
+
+Every generated line has to survive two independent checks before it reaches you — shape
+first, then whether it's actually true of *this* candidate:
+
+<p align="center">
+  <img src="docs/diagrams/grounding_loop.svg" alt="Writing agent validation and retry loop" width="100%">
+</p>
+
+Nothing is ever auto-submitted. `status` only moves when a human calls
+`set_application_status` — from the UI or over MCP — never as a side effect of a
+pipeline run:
+
+<p align="center">
+  <img src="docs/diagrams/application_states.svg" alt="Application status state diagram" width="640">
+</p>
 
 ## Want the full picture?
 

@@ -1,0 +1,82 @@
+<svg viewBox="0 0 760 460" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #0d0f1a; }
+    .state { fill: #171a2e; stroke-width: 2.5; }
+    .state.draft { stroke: #6c5ce7; }
+    .state.ready { stroke: #00cec9; }
+    .state.submitted { stroke: #55efc4; }
+    .state.archived { stroke: #636e9c; stroke-dasharray: 5 4; }
+    .state-title { fill: #f4f3ff; font-size: 16px; font-weight: 700; }
+    .state-sub { fill: #9b95c9; font-size: 10.5px; }
+    .edge { stroke: #8b7cf6; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; animation: dash 1s linear infinite; }
+    .edge-archive { stroke: #636e9c; stroke-width: 1.8; fill: none; stroke-dasharray: 4 5; animation: dash 1.6s linear infinite; opacity: 0.75; }
+    .edge-label { fill: #cfc9ff; font-size: 11px; }
+    .edge-label-dim { fill: #6f6a99; font-size: 10.5px; font-style: italic; }
+    .title-main { fill: #ffffff; font-size: 19px; font-weight: 700; }
+    .title-sub { fill: #8b85b8; font-size: 12.5px; }
+    .human { fill: #ffeaa7; font-size: 10.5px; }
+    .pulse { animation: glow 2.6s ease-in-out infinite; }
+    @keyframes dash { to { stroke-dashoffset: -28; } }
+    @keyframes glow {
+      0%, 100% { filter: drop-shadow(0 0 0px rgba(139,124,246,0)); }
+      50% { filter: drop-shadow(0 0 8px rgba(139,124,246,0.8)); }
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="460" rx="14"/>
+  <text class="title-main" x="24" y="34">ApplicationRecord.status &#8212; human-driven, never auto-advanced</text>
+  <text class="title-sub" x="24" y="54">FR-14: submitted is set by a person, the agent never sends anything</text>
+
+  <!-- draft -->
+  <g class="pulse" style="animation-delay:0s">
+    <rect class="state draft" x="60" y="100" width="180" height="76" rx="12"/>
+    <text class="state-title" x="150" y="134" text-anchor="middle">draft</text>
+    <text class="state-sub" x="150" y="152" text-anchor="middle">set by track_application</text>
+    <text class="state-sub" x="150" y="166" text-anchor="middle">every new run starts here</text>
+  </g>
+
+  <!-- ready -->
+  <g class="pulse" style="animation-delay:0.4s">
+    <rect class="state ready" x="520" y="100" width="180" height="76" rx="12"/>
+    <text class="state-title" x="610" y="134" text-anchor="middle">ready</text>
+    <text class="state-sub" x="610" y="152" text-anchor="middle">reviewed by the candidate</text>
+  </g>
+
+  <!-- submitted -->
+  <g class="pulse" style="animation-delay:0.8s">
+    <rect class="state submitted" x="520" y="290" width="180" height="76" rx="12"/>
+    <text class="state-title" x="610" y="324" text-anchor="middle">submitted</text>
+    <text class="state-sub" x="610" y="342" text-anchor="middle">candidate applied, off-system</text>
+  </g>
+
+  <!-- archived -->
+  <g class="pulse" style="animation-delay:1.2s">
+    <rect class="state archived" x="60" y="290" width="180" height="76" rx="12"/>
+    <text class="state-title" x="150" y="324" text-anchor="middle">archived</text>
+    <text class="state-sub" x="150" y="342" text-anchor="middle">reachable from any state</text>
+  </g>
+
+  <!-- draft -> ready -->
+  <path class="edge" d="M240,138 H520"/>
+  <polygon points="514,132 526,138 514,144" fill="#8b7cf6"/>
+  <text class="edge-label" x="380" y="126" text-anchor="middle">set_application_status(ready)</text>
+  <text class="human" x="380" y="112" text-anchor="middle">&#128100; human action, MCP or UI</text>
+
+  <!-- ready -> submitted -->
+  <path class="edge" d="M610,176 V290"/>
+  <polygon points="604,284 610,296 616,284" fill="#8b7cf6"/>
+  <text class="edge-label" x="610" y="236" text-anchor="middle" font-size="10">set_application_status(submitted)</text>
+
+  <!-- draft/ready/submitted -> archived (dotted, converging) -->
+  <path class="edge-archive" d="M150,176 V290" />
+  <path class="edge-archive" d="M520,138 C 340,138 340,328 240,328" />
+  <path class="edge-archive" d="M520,328 H240" />
+  <polygon points="234,322 246,328 234,334" fill="#636e9c"/>
+  <text class="edge-label-dim" x="380" y="392" text-anchor="middle">any status &#8594; archived (no longer pursued)</text>
+
+  <!-- legend -->
+  <circle cx="30" cy="430" r="5" fill="#8b7cf6"/>
+  <text class="edge-label" x="42" y="434">explicit transition</text>
+  <circle cx="200" cy="430" r="5" fill="#636e9c"/>
+  <text class="edge-label" x="212" y="434">archive from anywhere</text>
+</svg>

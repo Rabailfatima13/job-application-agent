@@ -596,7 +596,7 @@ Everything in this section is explicitly **NOT currently implemented** — these
     Per requirement: `requirement_weight` (1.0 must-have / 0.5 nice-to-have) times `match_strength` (1.0/0.5/0.25/0.0 for MATCH/PARTIAL/RELATED/MISSING). Sum those products, divide by the sum of all requirement weights. It's a plain weighted average, computed in code from the model's per-requirement judgements.
 
 15. **How do you test an LLM-based pipeline without spending API quota on every test run?**
-    Every model and search call is dependency-injected — tests supply a stub `request_fn` or a fake client returning a scripted reply, so the pipeline's *logic* is fully tested without ever calling a real API. 434 tests currently run this way with zero network access required.
+    Every model and search call is dependency-injected — tests supply a stub `request_fn` or a fake client returning a scripted reply, so the pipeline's *logic* is fully tested without ever calling a real API. 588 tests currently run this way with zero network access required.
 
 16. **What are the biggest limitations right now?**
     The subject-relevance scoring rule and the anti-fabrication grounding check both rely on the model actually following instructions for anything without a hard "fingerprint" (a genuinely new term or number) — the deterministic layer can catch fabrication, but it can't catch every kind of subtle misjudgement or proficiency inflation. That's disclosed honestly rather than hidden.
@@ -625,7 +625,7 @@ The pipeline is a few stages: it parses your CV and the job posting into structu
 
 The part I'm proudest of is the grounding system. Before any tailored CV or cover letter is shown to you, every single sentence in it is checked against your actual CV. If it says something your CV doesn't support — like inventing a technology or rounding 'basic knowledge' up to 'expert' — that gets rejected, and the model is told exactly what was wrong and asked to fix it. If it genuinely can't produce something honest after a few tries, it just... doesn't give you a document, rather than giving you something that might not be true.
 
-Everything gets saved to a little tracker so you can see all your applications in one place, and there's also a version of this exposed through something called MCP, so another tool could use the same pipeline. It's built with 434 tests and 98% test coverage, so I have real confidence the pieces actually behave the way I'm describing."
+Everything gets saved to a little tracker so you can see all your applications in one place, and there's also a version of this exposed through something called MCP, so another tool could use the same pipeline. It's built with 588 tests and 96% test coverage, so I have real confidence the pieces actually behave the way I'm describing."
 
 ---
 
@@ -645,7 +645,7 @@ Everything gets saved to a little tracker so you can see all your applications i
 
 **And then grounding, which is the part I care most about.** Once the writing agent drafts a tailored CV bullet or a cover-letter sentence, it doesn't go straight to you. It's checked against your actual CV — every distinctive term and every number in it has to trace back to something the CV really says. If it doesn't, that draft is rejected, the model is told precisely what was unsupported, and it's asked to rewrite — up to a few attempts. If it still can't produce something honest, nothing is returned at all, and you just keep your original CV and an honest list of what's missing. Schema validation and grounding are two completely separate checks on purpose — one confirms the JSON shape is right, the other confirms the content is actually true, and a model output has to pass both.
 
-**Where it stands right now:** 434 tests passing, 98 percent coverage, clean linting, and it's committed and pushed. Along the way I found and fixed several real bugs from live runs — things like a search query accidentally pulling in a completely different company's job posting, an API key that was leaking into log output, and a scoring rule that was letting unrelated evidence count as partial credit. Every one of those has a regression test now, so it can't quietly come back.
+**Where it stands right now:** 588 tests passing, 96 percent coverage, clean linting, and it's committed and pushed. Along the way I found and fixed several real bugs from live runs — things like a search query accidentally pulling in a completely different company's job posting, an API key that was leaking into log output, and a scoring rule that was letting unrelated evidence count as partial credit. Every one of those has a regression test now, so it can't quietly come back.
 
 The honest limitations are that the subject-relevance rule and part of the anti-fabrication check live in the prompt, not in code that can mathematically guarantee correctness — so they narrow the failure mode rather than eliminate it completely. I'd rather say that plainly than overclaim."
 

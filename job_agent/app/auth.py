@@ -27,7 +27,9 @@ def _store(settings: Settings) -> UserStore:
 def _render_login(settings: Settings) -> None:
     email = st.text_input("Email", key="login_email")
     password = st.text_input("Password", type="password", key="login_password")
-    if st.button("Log in", type="primary", key="login_submit"):
+    if st.button(
+        "Sign in →", type="primary", key="login_submit", use_container_width=True
+    ):
         user = _store(settings).authenticate(email, password)
         if user is None:
             st.error("Incorrect email or password.")
@@ -43,7 +45,12 @@ def _render_signup(settings: Settings) -> None:
     confirm = st.text_input(
         "Confirm password", type="password", key="signup_confirm"
     )
-    if st.button("Create account", type="primary", key="signup_submit"):
+    if st.button(
+        "Create account →",
+        type="primary",
+        key="signup_submit",
+        use_container_width=True,
+    ):
         if password != confirm:
             st.error("Passwords do not match.")
             return
@@ -67,13 +74,25 @@ def render_gate(settings: Settings) -> User | None:
     if user is not None:
         return user
 
-    st.title("Job Application Agent")
-    st.caption("Sign in to continue.")
-    tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
-    with tab_login:
-        _render_login(settings)
-    with tab_signup:
-        _render_signup(settings)
+    st.markdown(
+        """
+        <div class="jaa-brand">
+            <div class="jaa-brand-mark">✦</div>
+            <div class="jaa-brand-title">Job Application Agent</div>
+            <div class="jaa-brand-tagline">
+                AI-powered applications, tailored to your strengths.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.container(key="login_card"):
+        st.caption("Sign in to continue.")
+        tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+        with tab_login:
+            _render_login(settings)
+        with tab_signup:
+            _render_signup(settings)
     return None
 
 

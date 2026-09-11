@@ -1,0 +1,84 @@
+<svg viewBox="0 0 1180 380" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #0d0f1a; }
+    .node-rect { fill: #171a2e; stroke: #6c5ce7; stroke-width: 2; }
+    .node-rect.good { stroke: #55efc4; }
+    .node-rect.bad { stroke: #ff7675; }
+    .node-title { fill: #f4f3ff; font-size: 14.5px; font-weight: 700; }
+    .node-sub { fill: #9b95c9; font-size: 10.5px; }
+    .flow { stroke: #8b7cf6; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; animation: dash 0.9s linear infinite; }
+    .flow-fail { stroke: #ff7675; stroke-width: 2; fill: none; stroke-dasharray: 5 5; animation: dash 0.8s linear infinite reverse; }
+    .label { fill: #cfc9ff; font-size: 11px; }
+    .label-fail { fill: #ff9f9d; font-size: 10.5px; }
+    .title-main { fill: #ffffff; font-size: 18px; font-weight: 700; }
+    .title-sub { fill: #8b85b8; font-size: 12px; }
+    .pulse { animation: glow 2.4s ease-in-out infinite; }
+    @keyframes dash { to { stroke-dashoffset: -28; } }
+    @keyframes glow {
+      0%, 100% { filter: drop-shadow(0 0 0px rgba(139,124,246,0)); }
+      50% { filter: drop-shadow(0 0 8px rgba(139,124,246,0.85)); }
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1180" height="380" rx="14"/>
+  <text class="title-main" x="24" y="32">Writing agent &#8212; produce, validate, retry (D8/D9)</text>
+  <text class="title-sub" x="24" y="52">Two independent checks: schema shape, then grounding against the CV (and company brief for letters)</text>
+
+  <g class="pulse" style="animation-delay:0s">
+    <rect class="node-rect" x="20" y="110" width="150" height="64" rx="10"/>
+    <text class="node-title" x="95" y="138" text-anchor="middle">prompt</text>
+    <text class="node-sub" x="95" y="156" text-anchor="middle">CV + brief</text>
+  </g>
+
+  <g class="pulse" style="animation-delay:0.3s">
+    <rect class="node-rect" x="210" y="110" width="150" height="64" rx="10"/>
+    <text class="node-title" x="285" y="138" text-anchor="middle">heavy model</text>
+    <text class="node-sub" x="285" y="156" text-anchor="middle">WritingDraft</text>
+  </g>
+
+  <g class="pulse" style="animation-delay:0.6s">
+    <rect class="node-rect" x="400" y="110" width="170" height="64" rx="10"/>
+    <text class="node-title" x="485" y="132" text-anchor="middle">schema validation</text>
+    <text class="node-sub" x="485" y="150" text-anchor="middle">is this the right shape?</text>
+    <text class="node-sub" x="485" y="163" text-anchor="middle">(D8)</text>
+  </g>
+
+  <g class="pulse" style="animation-delay:0.9s">
+    <rect class="node-rect" x="610" y="110" width="180" height="64" rx="10"/>
+    <text class="node-title" x="700" y="132" text-anchor="middle">grounding validation</text>
+    <text class="node-sub" x="700" y="150" text-anchor="middle">is this true of THIS candidate?</text>
+    <text class="node-sub" x="700" y="163" text-anchor="middle">deterministic first (D9)</text>
+  </g>
+
+  <g class="pulse" style="animation-delay:1.2s">
+    <rect class="node-rect good" x="830" y="110" width="180" height="64" rx="10"/>
+    <text class="node-title" x="920" y="132" text-anchor="middle">TailoredCV +</text>
+    <text class="node-title" x="920" y="148" text-anchor="middle">CoverLetter</text>
+    <text class="node-sub" x="920" y="164" text-anchor="middle">returned to supervisor</text>
+  </g>
+
+  <g class="pulse" style="animation-delay:1.5s">
+    <rect class="node-rect bad" x="740" y="290" width="230" height="56" rx="10"/>
+    <text class="node-title" x="855" y="314" text-anchor="middle">RetryExhaustedError</text>
+    <text class="node-sub" x="855" y="330" text-anchor="middle">out of attempts &#8212; nothing written</text>
+  </g>
+
+  <!-- forward flow -->
+  <path class="flow" d="M170,142 H210"/>
+  <path class="flow" d="M360,142 H400"/>
+  <path class="flow" d="M570,142 H610"/>
+  <path class="flow" d="M790,142 H830"/>
+  <polygon points="824,136 836,142 824,148" fill="#8b7cf6"/>
+
+  <!-- retry loop: schema validation fails -->
+  <path class="flow-fail" d="M485,174 C 485,200 300,200 285,174" />
+  <text class="label-fail" x="385" y="216" text-anchor="middle">malformed &#8594; retry, error fed back</text>
+
+  <!-- retry loop: grounding validation fails -->
+  <path class="flow-fail" d="M700,174 C 700,250 300,250 285,174" />
+  <text class="label-fail" x="495" y="266" text-anchor="middle">unsupported claim &#8594; retry, quoting the violation</text>
+
+  <!-- exhausted: either check keeps failing past the retry budget -->
+  <path class="flow-fail" d="M760,174 C 800,220 830,250 840,290"/>
+  <text class="label-fail" x="890" y="230" text-anchor="middle">bounded give-up</text>
+</svg>

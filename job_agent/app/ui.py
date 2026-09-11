@@ -872,14 +872,27 @@ def render_last_run(settings: Settings) -> None:
 
 
 def _inject_background_style() -> None:
-    """A soft pastel wash behind the app, light-mode only.
+    """The purple/indigo design system for the whole app: login/signup,
+    and the authenticated Home/Profile/Entry/tailored-CV-history area.
 
-    Purely decorative - no element structure, text, or behavior changes, so
-    it has no effect on anything a test inspects. Streamlit itself has no
-    API for a textured/gradient background, only flat theme colors, so this
-    is the one deliberate, narrow use of injected CSS in the app - scoped to
-    `prefers-color-scheme: light` so a viewer in dark mode keeps Streamlit's
-    normal dark background instead of a jarring bright wash.
+    Purely decorative/cosmetic - no element structure, text, or behavior
+    changes, so it has no effect on anything a test inspects. Streamlit
+    itself has no API for a textured/gradient background or for restyling
+    its own widgets, so this is the one deliberate, centralized place for
+    injected CSS in the app.
+
+    Every rule is scoped with a real selector - `.jaa-brand`/`.st-key-login_card`
+    for the login screen, `.st-key-profile_card`/`.st-key-entry_card`/
+    `.st-key-tailored_history_card` for the authenticated area's own
+    `st.container(key=...)` wrappers - rather than an invisible marker, so
+    each one only ever matches the screen it belongs to. The `--jaa-*` custom
+    properties and this same card/selector pattern are what let the
+    authenticated area reuse the login screen's design system instead of
+    redefining it, and are themselves reusable again for Loading/Results
+    later. Card and background rules stay under `prefers-color-scheme: light`
+    (the authenticated widgets already have a working native dark theme;
+    only the light-mode look is replaced), while button colors apply in
+    both themes - a brand color, not a light-mode decoration.
     """
     st.markdown(
         """
@@ -887,13 +900,10 @@ def _inject_background_style() -> None:
         @media (prefers-color-scheme: light) {
         [data-testid="stAppViewContainer"] {
         background:
-        radial-gradient(circle at 12% 18%, rgba(255,179,198,.55), transparent 42%),
-        radial-gradient(circle at 82% 12%, rgba(255,200,210,.45), transparent 40%),
-        radial-gradient(circle at 78% 58%, rgba(168,214,255,.45), transparent 45%),
-        radial-gradient(circle at 8% 68%, rgba(168,214,255,.4), transparent 45%),
-        radial-gradient(circle at 55% 80%, rgba(255,240,175,.55), transparent 50%),
-        radial-gradient(circle at 42% 42%, rgba(214,190,255,.35), transparent 45%),
-        #fdfbf5;
+        radial-gradient(circle at 12% 8%, rgba(99,91,255,.10), transparent 45%),
+        radial-gradient(circle at 88% 15%, rgba(120,170,255,.10), transparent 45%),
+        radial-gradient(circle at 20% 85%, rgba(99,91,255,.06), transparent 50%),
+        #F7F5FF;
         background-attachment: fixed;
         }
         [data-testid="stHeader"] { background: transparent; }
@@ -901,6 +911,237 @@ def _inject_background_style() -> None:
         /* Hide only the Deploy button - the main menu ("stMainMenu") and the
            rest of the toolbar are untouched, in both light and dark mode. */
         [data-testid="stAppDeployButton"] { display: none; }
+
+        /* --- Login/signup design system (purple/indigo AI-product theme) */
+        :root {
+        --jaa-bg: #F7F5FF;
+        --jaa-primary: #635BFF;
+        --jaa-primary-hover: #5147D9;
+        --jaa-text: #19172B;
+        --jaa-text-secondary: #6F6B85;
+        --jaa-input-bg: #F3F1FA;
+        --jaa-white: #FFFFFF;
+        --jaa-soft-purple: #EEECFF;
+        --jaa-success: #16A36A;
+        --jaa-warning: #D99000;
+        --jaa-error: #D64545;
+        --jaa-font: Inter, ui-sans-serif, system-ui, -apple-system,
+            BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        /* Subtle lavender/blue wash behind the login screen only - kept as
+           a fixed light brand background regardless of OS theme, the same
+           way most product login screens do, rather than the app's own
+           dark/light-aware chrome. */
+        [data-testid="stAppViewContainer"]:has(.jaa-brand) {
+        background:
+        radial-gradient(circle at 15% 8%, rgba(99,91,255,.12), transparent 45%),
+        radial-gradient(circle at 88% 18%, rgba(120,170,255,.12), transparent 45%),
+        radial-gradient(circle at 50% 100%, rgba(99,91,255,.08), transparent 55%),
+        var(--jaa-bg) !important;
+        background-attachment: fixed;
+        }
+        [data-testid="stAppViewContainer"]:has(.jaa-brand) [data-testid="stHeader"] {
+        background: transparent;
+        }
+        [data-testid="stAppViewContainer"]:has(.jaa-brand)
+            [data-testid="stMainBlockContainer"] {
+        font-family: var(--jaa-font);
+        }
+
+        /* Brand header */
+        .jaa-brand {
+        max-width: 420px;
+        margin: 3.5rem auto 1.75rem auto;
+        text-align: center;
+        }
+        .jaa-brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--jaa-primary), #8B7FFF);
+        color: var(--jaa-white);
+        font-size: 1.1rem;
+        margin-bottom: 0.9rem;
+        }
+        .jaa-brand-title {
+        font-family: var(--jaa-font);
+        font-size: 1.7rem;
+        font-weight: 700;
+        color: var(--jaa-text);
+        line-height: 1.25;
+        }
+        .jaa-brand-tagline {
+        font-family: var(--jaa-font);
+        font-size: 0.95rem;
+        color: var(--jaa-text-secondary);
+        margin-top: 0.4rem;
+        }
+
+        /* Login/signup card */
+        .st-key-login_card {
+        max-width: 420px;
+        margin: 0 auto 3rem auto;
+        background: var(--jaa-white);
+        border-radius: 18px;
+        box-shadow: 0 20px 60px -15px rgba(99,91,255,.25),
+            0 8px 24px -8px rgba(25,23,43,.08);
+        padding: 2rem 2rem 1.75rem 2rem;
+        }
+        .st-key-login_card [data-testid="stCaptionContainer"] {
+        text-align: center;
+        margin-bottom: 1.1rem;
+        color: var(--jaa-text-secondary);
+        font-family: var(--jaa-font);
+        }
+
+        /* Segmented tab-style selector, built on the native st.tabs()
+           component - purely visual, the underlying tab state is untouched. */
+        .st-key-login_card [data-testid="stTabs"] [role="tablist"] {
+        display: flex;
+        gap: 0.25rem;
+        background: var(--jaa-input-bg);
+        border-radius: 12px;
+        padding: 4px;
+        margin-bottom: 1.5rem;
+        border: none;
+        }
+        .st-key-login_card [data-testid="stTab"] {
+        flex: 1;
+        justify-content: center;
+        border-radius: 9px;
+        padding: 0.5rem 0.75rem;
+        color: var(--jaa-text-secondary);
+        font-weight: 600;
+        transition: background .15s ease, color .15s ease;
+        }
+        .st-key-login_card [data-testid="stTab"] p {
+        font-family: var(--jaa-font);
+        margin: 0;
+        }
+        .st-key-login_card [data-testid="stTab"][aria-selected="true"] {
+        background: var(--jaa-white);
+        color: var(--jaa-primary);
+        box-shadow: 0 1px 3px rgba(25,23,43,.08);
+        }
+        .st-key-login_card [data-testid="stTab"] .react-aria-SelectionIndicator {
+        display: none;
+        }
+        .st-key-login_card [data-testid="stTabPanel"] {
+        padding-top: 0.25rem;
+        }
+
+        /* Inputs */
+        .st-key-login_card [data-testid="stWidgetLabel"] p {
+        font-family: var(--jaa-font);
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--jaa-text);
+        }
+        .st-key-login_card [data-testid="stTextInputRootElement"] {
+        background: var(--jaa-input-bg);
+        border: 1px solid transparent;
+        border-radius: 10px;
+        height: 46px;
+        transition: border-color .15s ease, background .15s ease;
+        }
+        .st-key-login_card [data-testid="stTextInputRootElement"]:focus-within {
+        border-color: var(--jaa-primary);
+        background: var(--jaa-white);
+        }
+        .st-key-login_card [data-testid="stTextInput"] input {
+        font-family: var(--jaa-font);
+        color: var(--jaa-text);
+        }
+
+        /* Primary buttons - purple everywhere in the app (replacing the old
+           red theme), not just on this screen; the login/signup submit
+           buttons additionally get the taller, full-width sizing that suits
+           a single-CTA card. */
+        button[data-testid="stBaseButton-primary"] {
+        background: var(--jaa-primary);
+        border-color: var(--jaa-primary);
+        border-radius: 10px;
+        font-family: var(--jaa-font);
+        font-weight: 600;
+        transition: background .15s ease, border-color .15s ease;
+        }
+        button[data-testid="stBaseButton-primary"]:hover {
+        background: var(--jaa-primary-hover);
+        border-color: var(--jaa-primary-hover);
+        }
+        .st-key-login_submit button[data-testid="stBaseButton-primary"],
+        .st-key-signup_submit button[data-testid="stBaseButton-primary"] {
+        height: 46px;
+        font-size: 0.95rem;
+        margin-top: 0.5rem;
+        }
+
+        /* Secondary buttons - clean and quiet, purple only on hover/focus,
+           so the primary purple CTA on the same screen still stands out. */
+        button[data-testid="stBaseButton-secondary"] {
+        background: var(--jaa-white);
+        border: 1px solid var(--jaa-soft-purple);
+        color: var(--jaa-text);
+        border-radius: 10px;
+        font-family: var(--jaa-font);
+        font-weight: 600;
+        transition: border-color .15s ease, color .15s ease;
+        }
+        button[data-testid="stBaseButton-secondary"]:hover {
+        border-color: var(--jaa-primary);
+        color: var(--jaa-primary);
+        }
+
+        /* Error / success messages */
+        .st-key-login_card [data-testid="stAlertContainer"] {
+        border-radius: 10px;
+        font-family: var(--jaa-font);
+        }
+        .st-key-login_card [data-testid="stAlertContentError"] {
+        color: var(--jaa-error);
+        }
+        .st-key-login_card [data-testid="stAlertContentSuccess"] {
+        color: var(--jaa-success);
+        }
+
+        /* --- Authenticated-area design system (Home / Profile / Entry /
+           tailored-CV history) - the same --jaa-* tokens and card pattern as
+           the login screen above, reused rather than redefined. Gated to
+           light mode, like the background wash below: these widgets already
+           have a fully-working native dark theme, and only the light-mode
+           look is being replaced with the branded one. */
+        @media (prefers-color-scheme: light) {
+        .st-key-profile_card,
+        .st-key-entry_card,
+        .st-key-tailored_history_card {
+        border: 1px solid var(--jaa-soft-purple);
+        border-radius: 16px;
+        box-shadow: 0 12px 32px -18px rgba(25,23,43,.12);
+        }
+        .st-key-profile_card [data-testid="stExpander"],
+        .st-key-entry_card [data-testid="stExpander"],
+        .st-key-tailored_history_card [data-testid="stExpander"] {
+        border-radius: 10px;
+        border-color: var(--jaa-soft-purple);
+        }
+        .st-key-page_header { text-align: center; }
+        [data-testid="stSidebar"] {
+        background: var(--jaa-white);
+        border-right: 1px solid var(--jaa-soft-purple);
+        }
+        }
+
+        /* Small screens - no fixed positioning anywhere above, so this only
+           trims spacing rather than restructuring the layout. */
+        @media (max-width: 480px) {
+        .jaa-brand, .st-key-login_card { max-width: 100%; }
+        .st-key-login_card { padding: 1.5rem 1.25rem; border-radius: 14px; }
+        .jaa-brand { margin-top: 2rem; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -918,38 +1159,49 @@ def render_tailored_cv_history(settings: Settings, user: User) -> None:
     `TailoredCVVersionStore`), and neither this list nor a run that produces
     it ever writes back to the baseline.
     """
-    st.subheader("📄 My Tailored CVs", anchor="my-tailored-cvs")
-    versions = TailoredCVVersionStore(settings.tracker_db_path).list_for_user(user.id)
-    if not versions:
-        st.caption("No tailored CVs yet - complete an analysis to generate one.")
-        return
+    with st.container(key="tailored_history_card", border=True):
+        st.caption("APPLICATION HISTORY")
+        st.subheader("📄 My Tailored CVs", anchor="my-tailored-cvs")
+        versions = TailoredCVVersionStore(settings.tracker_db_path).list_for_user(
+            user.id
+        )
+        if not versions:
+            st.caption("No tailored CVs yet - complete an analysis to generate one.")
+            return
 
-    for version in versions:
-        with st.expander(f"📄 {version.company}"):
-            st.markdown(f"**{version.role}**")
-            st.caption(f"Created: {version.created_at.strftime('%Y-%m-%d %H:%M')}")
-            if version.baseline_cv_updated_at is not None:
+        for version in versions:
+            with st.expander(f"📄 {version.company}"):
+                st.markdown(f"**{version.role}**")
                 st.caption(
-                    "Tailored from your baseline CV as of "
-                    f"{version.baseline_cv_updated_at.strftime('%Y-%m-%d %H:%M')}."
+                    f"Created: {version.created_at.strftime('%Y-%m-%d %H:%M')}"
                 )
-            st.markdown(version.cv_text)
-            st.download_button(
-                "Download this tailored CV",
-                data=version.cv_text,
-                file_name=f"tailored_cv_{version.company}_{version.id}.txt",
-                mime="text/plain",
-                key=f"download_tailored_cv_{version.id}",
-            )
+                if version.baseline_cv_updated_at is not None:
+                    st.caption(
+                        "Tailored from your baseline CV as of "
+                        f"{version.baseline_cv_updated_at.strftime('%Y-%m-%d %H:%M')}."
+                    )
+                st.markdown(version.cv_text)
+                st.download_button(
+                    "Download this tailored CV",
+                    data=version.cv_text,
+                    file_name=f"tailored_cv_{version.company}_{version.id}.txt",
+                    mime="text/plain",
+                    key=f"download_tailored_cv_{version.id}",
+                )
 
 
-def render_tailored_cv_sidebar_link() -> None:
-    """A quick jump to "My Tailored CVs" from the sidebar, next to the
-    account panel - a plain in-page anchor link to the same section
-    `render_tailored_cv_history` renders further down (see its
-    `anchor="my-tailored-cvs"`), not a second copy of that content and not
-    a rerun: clicking it just scrolls the existing page."""
+def render_sidebar_nav() -> None:
+    """User-facing navigation next to the account panel: plain in-page
+    anchor links to sections further down this same script (Home is
+    `st.title`'s own anchor, "My Profile" and "My Tailored CVs" are
+    `profile.render_baseline_cv_section`'s and `render_tailored_cv_history`'s
+    own `anchor=`), not a second copy of any of that content and not a
+    rerun - clicking one just scrolls the existing page. No technical detail
+    (model names, token counts, pipeline stages) belongs here; see `main`'s
+    own comment on why `render_sidebar` is never called."""
     with st.sidebar:
+        st.markdown("[🏠 Home](#home)")
+        st.markdown("[👤 My Profile](#my-profile)")
         st.markdown("[📄 My Tailored CVs](#my-tailored-cvs)")
 
 
@@ -964,24 +1216,24 @@ def main() -> None:
         # signup screen. Nothing else in this app is reachable until then.
         return
 
-    st.title("Job Application Agent")
-    st.caption(
-        "Save your CV once as your baseline, then add a job description. "
-        "The agent researches the company, scores your fit, and tailors "
-        "your material using only what your baseline CV already says."
-    )
+    with st.container(key="page_header"):
+        st.title("✦ Job Application Agent", anchor="home")
+        st.subheader("Let's prepare your next application.")
+        st.caption(
+            "Start with your baseline CV, then let the agent analyze a job "
+            "and create a tailored application using only your existing "
+            "experience."
+        )
 
     auth.render_account_sidebar(user)
-    render_tailored_cv_sidebar_link()
+    render_sidebar_nav()
     # The technical "Configuration" sidebar (provider/model names, which
     # keys are set, the tracker db filename) is deliberately not shown to
     # the end user - product decision, not a settings change. `render_sidebar`
     # is untouched and still fully correct; nothing here calls it. The
-    # sidebar now shows only the account panel above (who is signed in, and
-    # the way out).
+    # sidebar now shows only the account panel and the nav links above.
 
     baseline = profile.render_baseline_cv_section(settings, user)
-    st.divider()
 
     # Once a run has completed, the Entry page steps back into a collapsed
     # "start over" section instead of staying front-and-center next to the
@@ -1001,7 +1253,6 @@ def main() -> None:
         render_entry_page(settings, baseline, user)
 
     render_last_run(settings)
-    st.divider()
     render_tailored_cv_history(settings, user)
 
 
@@ -1018,48 +1269,54 @@ def render_entry_page(
     gets replaced (see `start_run`); hiding this after a result appeared
     would break that and give no way back to it.
     """
-    st.subheader("Step 2 of 4 — 📥 Job Application")
+    with st.container(key="entry_card", border=True):
+        st.caption("START A NEW APPLICATION")
+        st.subheader("Step 2 of 4 — Add a job description")
 
-    if baseline is None:
-        st.caption(
-            "Save a baseline CV in **My Profile** above before running your "
-            "first analysis - every application is tailored from it."
+        if baseline is None:
+            st.caption(
+                "Save a baseline CV in **My Profile** above before running "
+                "your first analysis - every application is tailored from it."
+            )
+        else:
+            st.caption(
+                "Your baseline CV (saved "
+                f"{baseline.updated_at.strftime('%Y-%m-%d %H:%M')}) is used "
+                "automatically - manage it in **My Profile** above. Tailoring "
+                "for this job never changes your baseline. Upload a job "
+                "description file (.txt, .md or .pdf) or paste the text "
+                "directly, then click **Start Analysis** below."
+            )
+
+        st.markdown("**Job description** — required")
+        jd_file = st.file_uploader(
+            "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="jd_file"
         )
-    else:
-        st.caption(
-            "Your baseline CV (saved "
-            f"{baseline.updated_at.strftime('%Y-%m-%d %H:%M')}) is used "
-            "automatically - manage it in **My Profile** above. Tailoring "
-            "for this job never changes your baseline. Upload a job "
-            "description file (.txt, .md or .pdf) or paste the text "
-            "directly, then click **Start Analysis** below."
-        )
-
-    st.markdown("**Job description** — required")
-    jd_file = st.file_uploader(
-        "Upload (.txt, .md, .pdf)", type=["txt", "md", "pdf"], key="jd_file"
-    )
-    jd_pasted = st.text_area("...or paste it", height=220, key="jd_text")
-
-    st.divider()
-
-    # Better to refuse the click than to spend a minute failing at it.
-    blockers = missing_requirements(settings)
-    if baseline is None:
-        blockers = [*blockers, "A baseline CV is required before a run can start."]
-    for blocker in blockers:
-        st.error(blocker)
-    if blockers:
-        st.caption(
-            "Set the missing values in your .env file, or save a baseline "
-            "CV above, then try again."
+        jd_pasted = st.text_area(
+            "Paste the job description", height=220, key="jd_text"
         )
 
-    if st.button(
-        "🚀 Start Analysis",
-        type="primary",
-        disabled=bool(blockers),
-        key="start_analysis",
-    ):
-        cv_text = baseline.cv_text if baseline is not None else ""
-        start_run(None, cv_text, jd_file, jd_pasted, settings, user, baseline)
+        # Better to refuse the click than to spend a minute failing at it.
+        blockers = missing_requirements(settings)
+        if baseline is None:
+            blockers = [
+                *blockers,
+                "A baseline CV is required before a run can start.",
+            ]
+        for blocker in blockers:
+            st.error(blocker)
+        if blockers:
+            st.caption(
+                "Set the missing values in your .env file, or save a "
+                "baseline CV above, then try again."
+            )
+
+        if st.button(
+            "✦ Start Analysis",
+            type="primary",
+            disabled=bool(blockers),
+            key="start_analysis",
+            width="stretch",
+        ):
+            cv_text = baseline.cv_text if baseline is not None else ""
+            start_run(None, cv_text, jd_file, jd_pasted, settings, user, baseline)

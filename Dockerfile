@@ -4,6 +4,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
+ENV PYTHONPATH=/app
 
 # Dependencies first, source second: a code change rebuilds only the fast
 # COPY + nothing layer below, not a full pip install.

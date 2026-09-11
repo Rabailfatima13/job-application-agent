@@ -61,7 +61,12 @@ def _render_edit_form(store: BaselineCVStore, user: User, baseline: BaselineCV) 
     edited = st.text_area(
         "Edit your baseline CV", value=baseline.cv_text, height=350, key=key
     )
-    if st.button("💾 Save Changes", type="primary", key="baseline_save_edit"):
+    if st.button(
+        "💾 Save Changes",
+        type="primary",
+        key="baseline_save_edit",
+        width="stretch",
+    ):
         try:
             store.save(user.id, edited)
         except ValueError as exc:
@@ -81,7 +86,9 @@ def _render_save_form(store: BaselineCVStore, user: User, *, replacing: bool) ->
     pasted = st.text_area("...or paste it", height=220, key=f"baseline_text_{suffix}")
     label = "Save as new baseline CV" if replacing else "Save baseline CV"
 
-    if st.button(label, type="primary", key=f"baseline_save_{suffix}"):
+    if st.button(
+        label, type="primary", key=f"baseline_save_{suffix}", width="stretch"
+    ):
         try:
             cv_text = _resolve_cv_text(file, pasted)
             store.save(user.id, cv_text)
@@ -98,30 +105,32 @@ def render_baseline_cv_section(settings: Settings, user: User) -> BaselineCV | N
     Returns the current baseline (or None), so the entry page below can use
     it without querying storage a second time in the same run.
     """
-    st.subheader("👤 My Profile — Baseline CV")
     store = _store(settings)
     baseline = store.get(user.id)
 
-    if baseline is None:
-        st.caption(
-            "Upload your CV once - it becomes your baseline, and every job "
-            "application is tailored from it. You will not need to upload "
-            "it again."
-        )
-        _render_save_form(store, user, replacing=False)
-    else:
-        st.success(
-            "✅ Baseline CV on file — saved "
-            f"{baseline.updated_at.strftime('%Y-%m-%d %H:%M')}."
-        )
-        st.caption(
-            "Every tailored application is built from this CV. Tailoring "
-            "for a specific job never changes it - only editing or "
-            "replacing it here does."
-        )
-        with st.expander("✏️ Edit CV", expanded=True):
-            _render_edit_form(store, user, baseline)
-        with st.expander("Replace baseline CV"):
-            _render_save_form(store, user, replacing=True)
+    with st.container(key="profile_card", border=True):
+        st.caption("BASELINE CV")
+        st.subheader("My profile", anchor="my-profile")
+
+        if baseline is None:
+            st.caption(
+                "Upload your CV once - it becomes your baseline, and every job "
+                "application is tailored from it. You will not need to upload "
+                "it again."
+            )
+            _render_save_form(store, user, replacing=False)
+        else:
+            st.badge("CV ready", icon=":material/check_circle:", color="green")
+            st.caption(
+                "Baseline CV on file — saved "
+                f"{baseline.updated_at.strftime('%Y-%m-%d %H:%M')}. Every "
+                "tailored application is built from this CV. Tailoring for "
+                "a specific job never changes it - only editing or "
+                "replacing it here does."
+            )
+            with st.expander("✏️ Edit CV", expanded=True):
+                _render_edit_form(store, user, baseline)
+            with st.expander("Replace baseline CV"):
+                _render_save_form(store, user, replacing=True)
 
     return baseline

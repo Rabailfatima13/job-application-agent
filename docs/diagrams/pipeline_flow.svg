@@ -1,0 +1,98 @@
+<svg viewBox="0 0 1260 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #0d0f1a; }
+    .node-rect { fill: #171a2e; stroke: #6c5ce7; stroke-width: 2; }
+    .node-rect.optional { stroke-dasharray: 6 5; stroke: #a29bfe; }
+    .node-title { fill: #f4f3ff; font-size: 17px; font-weight: 700; }
+    .node-sub { fill: #9b95c9; font-size: 12px; }
+    .flow { stroke: #8b7cf6; stroke-width: 3; fill: none; stroke-dasharray: 9 7; animation: dash 0.9s linear infinite; }
+    .flow-skip { stroke: #55507f; stroke-width: 2; fill: none; stroke-dasharray: 5 5; animation: dash 1.4s linear infinite; }
+    .flow-retry { stroke: #ff8fab; stroke-width: 2; fill: none; stroke-dasharray: 4 4; animation: dash 0.7s linear infinite reverse; }
+    .label { fill: #cfc9ff; font-size: 12px; }
+    .label-skip { fill: #6f6a99; font-size: 11px; font-style: italic; }
+    .label-retry { fill: #ff8fab; font-size: 11px; }
+    .arrowhead { fill: #8b7cf6; }
+    .pulse { animation: glow 2.6s ease-in-out infinite; }
+    .title-main { fill: #ffffff; font-size: 19px; font-weight: 700; }
+    .title-sub { fill: #8b85b8; font-size: 12.5px; }
+    @keyframes dash { to { stroke-dashoffset: -32; } }
+    @keyframes glow {
+      0%, 100% { filter: drop-shadow(0 0 0px rgba(139,124,246,0)); }
+      50% { filter: drop-shadow(0 0 9px rgba(139,124,246,0.85)); }
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1260" height="360" rx="14"/>
+  <text class="title-main" x="24" y="34">Supervisor pipeline &#8212; LangGraph StateGraph over RunContext</text>
+  <text class="title-sub" x="24" y="54">START &#8594; parse_cv &#8594; parse_jd &#8594; research &#8594; score_fit &#8594; write_application (optional) &#8594; track_application &#8594; END</text>
+
+  <!-- nodes -->
+  <!-- 1 parse_cv -->
+  <g class="pulse" style="animation-delay:0s">
+    <rect class="node-rect" x="20" y="150" width="168" height="72" rx="10"/>
+    <text class="node-title" x="104" y="182" text-anchor="middle">parse_cv</text>
+    <text class="node-sub" x="104" y="202" text-anchor="middle">light tier &#8226; ParsedCV</text>
+  </g>
+
+  <!-- 2 parse_jd -->
+  <g class="pulse" style="animation-delay:0.35s">
+    <rect class="node-rect" x="224" y="150" width="168" height="72" rx="10"/>
+    <text class="node-title" x="308" y="182" text-anchor="middle">parse_jd</text>
+    <text class="node-sub" x="308" y="202" text-anchor="middle">light tier &#8226; JobDescription</text>
+  </g>
+
+  <!-- 3 research -->
+  <g class="pulse" style="animation-delay:0.7s">
+    <rect class="node-rect" x="428" y="150" width="168" height="72" rx="10"/>
+    <text class="node-title" x="512" y="182" text-anchor="middle">research</text>
+    <text class="node-sub" x="512" y="202" text-anchor="middle">web_search &#8226; best-effort</text>
+  </g>
+
+  <!-- 4 score_fit -->
+  <g class="pulse" style="animation-delay:1.05s">
+    <rect class="node-rect" x="632" y="150" width="168" height="72" rx="10"/>
+    <text class="node-title" x="716" y="182" text-anchor="middle">score_fit</text>
+    <text class="node-sub" x="716" y="202" text-anchor="middle">heavy tier &#8226; FitReport</text>
+  </g>
+
+  <!-- 5 write_application (optional) -->
+  <g class="pulse" style="animation-delay:1.4s">
+    <rect class="node-rect optional" x="836" y="150" width="188" height="72" rx="10"/>
+    <text class="node-title" x="930" y="176" text-anchor="middle">write_application</text>
+    <text class="node-sub" x="930" y="194" text-anchor="middle">optional &#8226; grounded draft</text>
+    <text class="node-sub" x="930" y="210" text-anchor="middle">schema + no-fabrication check</text>
+  </g>
+
+  <!-- 6 track_application -->
+  <g class="pulse" style="animation-delay:1.75s">
+    <rect class="node-rect" x="1064" y="150" width="176" height="72" rx="10"/>
+    <text class="node-title" x="1152" y="182" text-anchor="middle">track_application</text>
+    <text class="node-sub" x="1152" y="202" text-anchor="middle">SQLite &#8226; status=draft</text>
+  </g>
+
+  <!-- arrows main flow -->
+  <path class="flow" d="M188,186 H224"/>
+  <path class="flow" d="M392,186 H428"/>
+  <path class="flow" d="M596,186 H632"/>
+  <path class="flow" d="M800,186 H836"/>
+  <path class="flow" d="M1024,186 H1064"/>
+  <polygon class="arrowhead" points="1058,180 1070,186 1058,192"/>
+
+  <!-- skip branch: score_fit -> track_application when fit below threshold -->
+  <path class="flow-skip" d="M716,222 C716,290 1152,290 1152,222" />
+  <text class="label-skip" x="934" y="312" text-anchor="middle">fit below threshold &#8212; skip writing, still tracked</text>
+
+  <!-- retry self-loop on write_application -->
+  <path class="flow-retry" d="M900,150 C880,100 980,100 960,150" />
+  <text class="label-retry" x="930" y="94" text-anchor="middle">retry: schema &#8594; grounding &#8594; bounded give-up</text>
+
+  <!-- legend -->
+  <circle cx="30" cy="330" r="5" fill="#8b7cf6"/>
+  <text class="label" x="42" y="334">pipeline edge</text>
+  <circle cx="150" cy="330" r="5" fill="#55507f"/>
+  <text class="label" x="162" y="334">conditional skip</text>
+  <circle cx="290" cy="330" r="5" fill="#ff8fab"/>
+  <text class="label" x="302" y="334">validation retry</text>
+  <rect x="430" y="325" width="14" height="10" fill="none" stroke="#a29bfe" stroke-width="2" stroke-dasharray="4 3"/>
+  <text class="label" x="450" y="334">stage present only when WritingAgent is injected</text>
+</svg>

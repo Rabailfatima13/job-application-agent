@@ -255,7 +255,7 @@ def test_a_logged_out_visitor_sees_only_the_login_signup_screen(settings, monkey
     assert "Sign in to continue." in rendered_text(app)
     # Nothing from the pipeline UI is reachable yet.
     assert not app.file_uploader
-    assert "🚀 Start Analysis" not in [b.label for b in app.button]
+    assert "✦ Start Analysis" not in [b.label for b in app.button]
 
 
 def test_signup_creates_an_account_and_signs_the_user_in(settings, monkeypatch):
@@ -270,7 +270,7 @@ def test_signup_creates_an_account_and_signs_the_user_in(settings, monkeypatch):
     assert not app.exception
     rendered = rendered_text(app)
     assert "Signed in as" in rendered and "Ada Lovelace" in rendered
-    assert "🚀 Start Analysis" in [b.label for b in app.button]
+    assert "✦ Start Analysis" in [b.label for b in app.button]
 
 
 def test_signup_with_mismatched_passwords_is_rejected(settings, monkeypatch):
@@ -283,7 +283,7 @@ def test_signup_with_mismatched_passwords_is_rejected(settings, monkeypatch):
     app.button(key="signup_submit").click().run()
 
     assert any("do not match" in e.value for e in app.error)
-    assert "🚀 Start Analysis" not in [b.label for b in app.button]
+    assert "✦ Start Analysis" not in [b.label for b in app.button]
 
 
 def test_signup_with_an_email_already_registered_is_rejected(settings, monkeypatch):
@@ -301,7 +301,7 @@ def test_signup_with_an_email_already_registered_is_rejected(settings, monkeypat
     app.button(key="signup_submit").click().run()
 
     assert any("already exists" in e.value for e in app.error)
-    assert "🚀 Start Analysis" not in [b.label for b in app.button]
+    assert "✦ Start Analysis" not in [b.label for b in app.button]
 
 
 def test_login_with_the_wrong_password_is_rejected(settings, monkeypatch):
@@ -317,7 +317,7 @@ def test_login_with_the_wrong_password_is_rejected(settings, monkeypatch):
     app.button(key="login_submit").click().run()
 
     assert any("Incorrect email or password" in e.value for e in app.error)
-    assert "🚀 Start Analysis" not in [b.label for b in app.button]
+    assert "✦ Start Analysis" not in [b.label for b in app.button]
 
 
 def test_login_with_correct_credentials_succeeds(settings, monkeypatch):
@@ -335,19 +335,19 @@ def test_login_with_correct_credentials_succeeds(settings, monkeypatch):
     assert not app.exception
     rendered = rendered_text(app)
     assert "Signed in as" in rendered and "Ada Lovelace" in rendered
-    assert "🚀 Start Analysis" in [b.label for b in app.button]
+    assert "✦ Start Analysis" in [b.label for b in app.button]
 
 
 def test_logging_out_returns_to_the_login_signup_screen(settings, monkeypatch):
     app = run_app(settings, monkeypatch=monkeypatch, logged_in=True).run()
-    assert "🚀 Start Analysis" in [b.label for b in app.button]  # precondition
+    assert "✦ Start Analysis" in [b.label for b in app.button]  # precondition
 
     logout = [b for b in app.button if b.label == "Log out"][0]
     logout.click().run()
 
     assert not app.exception
     assert "Sign in to continue." in rendered_text(app)
-    assert "🚀 Start Analysis" not in [b.label for b in app.button]
+    assert "✦ Start Analysis" not in [b.label for b in app.button]
 
 
 # --- import and startup ------------------------------------------------------
@@ -920,7 +920,7 @@ def test_the_entry_page_explains_what_is_required(settings, monkeypatch):
     rendered = rendered_text(app)
     assert "Job description" in rendered and "required" in rendered
     assert "baseline CV" in rendered  # explains the baseline is reused
-    assert "🚀 Start Analysis" in [b.label for b in app.button]
+    assert "✦ Start Analysis" in [b.label for b in app.button]
 
 
 def test_a_second_run_replaces_the_first_result(settings, monkeypatch):
