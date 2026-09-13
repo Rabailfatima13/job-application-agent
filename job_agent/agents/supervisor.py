@@ -26,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 
 from ..config import Settings
 from ..llm import ModelRouter
+from ..memory.parsed_cv_cache import ParsedCVCache
 from ..memory.research_cache import CompanyResearchCache
 from ..memory.session import RunContext
 from ..memory.tracker import ApplicationTracker, SQLiteApplicationTracker
@@ -260,11 +261,14 @@ def build_supervisor(
     collector = collector or TraceCollector(log_path=settings.tool_call_log_path)
     tracker = tracker or SQLiteApplicationTracker(settings.tracker_db_path)
     search_client = WebSearchClient.from_settings(settings)
-    registry = build_default_registry(router, collector, search_client=search_client)
-    # Same tracker database file, one more table - not a second store to
-    # wire up or a second thing that can go out of sync with it.
+    # Same tracker database file, one more table each - not a second store to
+    # wire up or a second thing that can go out of sync with either.
     research_cache = CompanyResearchCache(
         settings.tracker_db_path, ttl_hours=settings.research_cache_ttl_hours
+    )
+    cv_cache = ParsedCVCache(settings.tracker_db_path)
+    registry = build_default_registry(
+        router, collector, search_client=search_client, cv_cache=cv_cache
     )
 
     return Supervisor(

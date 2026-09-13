@@ -1523,6 +1523,74 @@ def test_the_entry_page_stays_expanded_after_a_failed_run(settings, monkeypatch)
     assert "✏️ Start a new analysis" not in [e.label for e in app.expander]
 
 
+def test_the_full_login_to_results_flow_works_as_one_continuous_session(
+    settings, monkeypatch
+):
+    """The mentor-specified flow, end to end, in one script session:
+
+        Login/Signup -> Job Entry -> Loading/Analysis -> Results
+
+    Not four routed pages - one continuous Streamlit script, exercised here
+    exactly as a real user would move through it: starts logged out, logs
+    in, sees the entry page labeled "Step 2 of 4", starts an analysis, sees
+    the loading page labeled "Step 3 of 4", and lands on results labeled
+    "Step 4 of 4" with the tailored CV, cover letter, and tailored-CV history
+    all present - while the technical Pipeline section and the Deploy button
+    both stay hidden throughout, exactly as the product decision requires.
+    """
+    from job_agent.memory import UserStore
+
+    user = UserStore(settings.tracker_db_path).create(
+        "Rabail Fatima", "rabail@example.com", "correct-horse-1"
+    )
+    # The `settings` fixture pre-seeds a baseline CV for TEST_USER.id (1) -
+    # this flow logs in as a freshly created user instead, so it needs its
+    # own baseline CV under that user's own real id.
+    BaselineCVStore(settings.tracker_db_path).save(user.id, CV_TEXT)
+
+    app = run_app(
+        settings,
+        pipeline=lambda *a: finished_context(),
+        monkeypatch=monkeypatch,
+        logged_in=False,
+    ).run()
+
+    # 1. Login
+    assert "Sign in to continue." in rendered_text(app)
+    app.text_input(key="login_email").set_value("rabail@example.com")
+    app.text_input(key="login_password").set_value("correct-horse-1")
+    app = app.button(key="login_submit").click().run()
+
+    rendered = rendered_text(app)
+    assert "Signed in as" in rendered and "Rabail Fatima" in rendered
+
+    # 2. Job Entry
+    assert any("Step 2 of 4" in s.value for s in app.subheader)
+    assert "cv_file" not in [w.key for w in app.file_uploader]  # no re-upload
+    app.text_area("jd_text").set_value(JD_TEXT)
+
+    # 3. Loading / Analysis
+    app = app.button(key="start_analysis").click().run()
+    assert any("Step 3 of 4" in s.value for s in app.subheader)
+
+    # 4. Results
+    assert any("Step 4 of 4" in s.value for s in app.subheader)
+    rendered = rendered_text(app)
+    assert "Dear Hiring Team," in rendered  # the cover letter
+    assert "Built a Task Management REST API" in rendered  # the tailored CV
+    assert "Arbisoft" in rendered  # the fit report / company research
+    labels = [e.label for e in app.expander]
+    assert "📄 Arbisoft" in labels  # saved under My Tailored CVs
+
+    # No technical pipeline detail anywhere on the final page.
+    for label in ("Model + tool calls", "Total time", "Tokens", "🧭 Pipeline"):
+        assert label not in rendered
+
+    # Deploy button stays hidden throughout.
+    css = "\n".join(m.value for m in app.markdown)
+    assert '[data-testid="stAppDeployButton"] { display: none; }' in css
+
+
 def test_the_deploy_button_is_hidden(settings, monkeypatch):
     app = run_app(settings, monkeypatch=monkeypatch).run()
 

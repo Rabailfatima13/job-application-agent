@@ -156,3 +156,62 @@ def test_reads_a_cv_from_a_file_path(make_router, fixtures_dir, sample_cv_text):
     parsed = parse_cv(fixtures_dir / "sample_cv.txt", router)
 
     assert parsed.raw_text == sample_cv_text.strip()
+
+
+# --- caching (efficiency: the same baseline CV, re-parsed for nothing on ----
+# every single analysis a user runs against it, unless a cache is supplied) --
+
+
+def test_omitting_the_cache_reproduces_the_exact_pre_caching_behaviour(
+    make_router, sample_cv_text
+):
+    router = make_router(
+        light_replies=[json.dumps(FIXTURE_EXTRACTION), json.dumps(FIXTURE_EXTRACTION)]
+    )
+
+    parse_cv(sample_cv_text, router)
+    parse_cv(sample_cv_text, router)
+
+    # No cache supplied - every call parses fresh, exactly as before caching
+    # existed.
+    assert len(router.for_step("parse_cv").calls) == 2
+
+
+def test_a_second_call_with_the_same_text_is_a_cache_hit_and_skips_the_model(
+    tmp_path, make_router, sample_cv_text
+):
+    from job_agent.memory import ParsedCVCache
+
+    cache = ParsedCVCache(tmp_path / "app.db")
+    router = make_router(light_replies=[json.dumps(FIXTURE_EXTRACTION)])
+
+    first = parse_cv(sample_cv_text, router, cache=cache)
+    second = parse_cv(sample_cv_text, router, cache=cache)
+
+    # Only one reply was ever queued - a second model call would raise
+    # IndexError popping from an empty list, so this also proves no request
+    # was made the second time, not merely that the result happens to match.
+    assert len(router.for_step("parse_cv").calls) == 1
+    assert second.candidate_name == first.candidate_name
+    assert [e.text for e in second.evidence] == [e.text for e in first.evidence]
+
+
+def test_a_changed_baseline_cv_is_not_served_the_old_parse(
+    tmp_path, make_router, sample_cv_text
+):
+    """Editing or replacing the baseline CV must never return a stale
+    parse - proven here by a second, different CV text triggering a real
+    second model call rather than reusing the first result."""
+    from job_agent.memory import ParsedCVCache
+
+    cache = ParsedCVCache(tmp_path / "app.db")
+    second_extraction = {**FIXTURE_EXTRACTION, "candidate_name": "A Different Name"}
+    router = make_router(
+        light_replies=[json.dumps(FIXTURE_EXTRACTION), json.dumps(second_extraction)]
+    )
+
+    parse_cv(sample_cv_text, router, cache=cache)
+    changed = parse_cv(sample_cv_text + "\nNew line.", router, cache=cache)
+
+    assert len(router.for_step("parse_cv").calls) == 2
+    assert changed.candidate_name == "A Different Name"

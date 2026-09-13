@@ -203,20 +203,86 @@ def _has_degree_abbreviation(term: str, corpus_lower: str) -> bool:
     )
 
 
+
+# A handful of standard adjective/noun equivalents for the same technology -
+# a live run had "REST APIs" (the CV's own words) rejected because the writer
+# said "RESTful APIs" instead. Same shape and same discipline as
+# `_DEGREE_EQUIVALENTS`: a small, closed list for one common CV-specific
+# case, not a general synonym system - a term that isn't literally one of
+# these words keeps its normal strictness.
+_TERM_EQUIVALENTS: list[set[str]] = [
+    {"rest", "restful"},
+]
+
+
+def _has_term_equivalent(term: str, corpus_lower: str) -> bool:
+    """Whether a known equivalent word for `term` appears in the corpus.
+
+    Structurally identical to `_has_degree_abbreviation` - whole-word only,
+    since "rest" is short enough to appear inside unrelated words ("interest",
+    "restore").
+    """
+    lowered = term.lower()
+    group = next((g for g in _TERM_EQUIVALENTS if lowered in g), None)
+    if group is None:
+        return False
+    return any(
+        re.search(rf"\b{re.escape(variant)}\b", corpus_lower) for variant in group
+    )
+
+
+# Domain acronyms this project's own writing prompts are prone to spelling
+# out in full - a live run had "Retrieval-Augmented Generation" rejected
+# term-by-term ("Retrieval", "Augmented", "Generation" each individually
+# absent) when the CV's own word was "RAG". Unlike `_TERM_EQUIVALENTS`, this
+# is a word-count change, not a word-form change, so it is handled as a
+# phrase-level rewrite before term extraction (see `_collapse_known_acronyms`)
+# rather than inside `is_term_supported` - matching a bare "Generation" or
+# "Retrieval" on its own would be far too easy to satisfy by accident.
+#
+# The separator between the phrase's words has to tolerate more than a plain
+# ASCII hyphen: the same live run's model wrote "Retrieval‑Augmented"
+# with U+2011 NON-BREAKING HYPHEN, a "smart" character plain `-` never
+# matches. `_HYPHENS` covers every hyphen/dash form seen from a model in
+# practice; `\s` still allows the fully spelled-out "Retrieval Augmented
+# Generation" with ordinary spaces.
+_HYPHENS = "-‐‑‒–—"
+_ACRONYM_EXPANSIONS: dict[str, str] = {
+    "retrieval augmented generation": "RAG",
+}
+
+
+def _collapse_known_acronyms(claim: str, corpus_lower: str) -> str:
+    """Rewrite a known full-form phrase back to its acronym, but only when
+    the acronym is real - i.e. actually appears in the CV - so a claim that
+    invents the phrase out of nothing (no "RAG" anywhere in the CV either)
+    is still rejected exactly as before this fix."""
+    rewritten = claim
+    for phrase, acronym in _ACRONYM_EXPANSIONS.items():
+        if not re.search(rf"\b{re.escape(acronym.lower())}\b", corpus_lower):
+            continue
+        pattern = rf"[{_HYPHENS}\s]+".join(re.escape(w) for w in phrase.split())
+        rewritten = re.sub(pattern, acronym, rewritten, flags=re.IGNORECASE)
+    return rewritten
+
+
 def is_term_supported(term: str, corpus_lower: str) -> bool:
     """Whether `term` appears in the CV, allowing a plural/singular difference.
 
     Matching stays substring-based, as it always was, so a term is still found
-    inside a longer word ("SQL" within "SQLAlchemy"). The singular form and the
-    degree-abbreviation check are only *additional* ways to match, never a
-    replacement - together they widen what counts as supported by exactly two
-    things: the plural `s`, and a handful of standard degree abbreviations.
+    inside a longer word ("SQL" within "SQLAlchemy"). The singular form, the
+    degree-abbreviation check, and the term-equivalent check are only
+    *additional* ways to match, never a replacement - together they widen
+    what counts as supported by exactly three things: the plural `s`, a
+    handful of standard degree abbreviations, and a handful of standard term
+    equivalents (see `_TERM_EQUIVALENTS`).
     """
     lowered = term.lower()
     return (
         lowered in corpus_lower
         or singular(term) in corpus_lower
         or _has_degree_abbreviation(term, corpus_lower)
+        or _has_term_equivalent(term, corpus_lower)
     )
 
 
@@ -408,6 +474,14 @@ def check_grounding(
         for term in _WORD.findall(phrase)
         for variant in (term.lower(), singular(term))
     }
+    # Just the employer's own name, not the full `allowed` set - see the
+    # `nameable` comment below for why a candidate claim gets only this much
+    # naming allowance and not the rest of `allowed` (the advertised role).
+    company_only = {
+        variant
+        for term in _WORD.findall(company_name)
+        for variant in (term.lower(), singular(term))
+    }
 
     company_lower = company_context.lower()
     company_numbers = numbers_in(company_context)
@@ -429,12 +503,18 @@ def check_grounding(
         # about the employer - never evidence for a claim about the candidate.
         # A role advertised as "Junior AI Engineer" must not make "my AI skills"
         # supportable, any more than "Kubernetes Engineer" would license
-        # Kubernetes.
-        nameable = set() if about_candidate else allowed
+        # Kubernetes - which is why a candidate claim gets only `company_only`
+        # (just the employer's name), never the full `allowed` set (which also
+        # contains words drawn from the *advertised role*, exactly the words
+        # that trap would need). Naming the employer itself carries no such
+        # risk - a live run had "...to apply my Python skills to Lumen's AI
+        # initiatives" rejected because "Lumen" is not on the CV, even though
+        # naming who the letter is for is not a claim of experience with them.
+        nameable = company_only if about_candidate else allowed
 
         unsupported_terms = [
             term
-            for term in distinctive_terms(claim)
+            for term in distinctive_terms(_collapse_known_acronyms(claim, searchable))
             if not is_term_supported(term, searchable)
             and term.lower() not in nameable
             and singular(term) not in nameable

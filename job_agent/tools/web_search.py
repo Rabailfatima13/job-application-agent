@@ -75,7 +75,7 @@ def _http_get(url: str, params: dict, headers: dict) -> dict:
     import httpx  # imported lazily so offline tests never touch it
 
     try:
-        response = httpx.get(url, params=params, headers=headers, timeout=10.0)
+        response = httpx.get(url, params=params, headers=headers, timeout=45.0)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:

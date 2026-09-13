@@ -8,6 +8,7 @@ and is not part of the required build.)
 """
 
 from .baseline_cv import BaselineCVStore
+from .parsed_cv_cache import ParsedCVCache
 from .research_cache import CompanyResearchCache
 from .session import RunContext
 from .tailored_cv_version import TailoredCVVersionStore
@@ -24,6 +25,7 @@ __all__ = [
     "CompanyResearchCache",
     "EmailAlreadyRegistered",
     "InMemoryApplicationTracker",
+    "ParsedCVCache",
     "RunContext",
     "SQLiteApplicationTracker",
     "TailoredCVVersionStore",

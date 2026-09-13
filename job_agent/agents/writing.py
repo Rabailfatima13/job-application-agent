@@ -185,6 +185,14 @@ the company works with a technology the CV does not mention, you may say the \
 company works with it and you may say it interests you, and you may NOT say \
 the candidate has used it, knows it, or has skills in it.
 
+Put a company fact and a statement about the candidate in separate sentences, \
+never combined into one. Write "The company partners with major retailers. I \
+would welcome the chance to contribute to that work." - not "Your work with \
+major retailers aligns with my ambition to contribute." This applies to facts \
+from COMPANY FACTS specifically (a client, a technology, a location, a \
+metric) - simply naming the company itself, as the employer you are writing \
+to, is always fine in either kind of sentence.
+
 Use exactly "Dear Hiring Team," as the salutation - do not address a named \
 person, a department or the company. Never write a template placeholder such \
 as [Candidate], [Your Name], [Date] or [Hiring Manager]. If no candidate name \

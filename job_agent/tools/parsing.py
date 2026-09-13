@@ -28,6 +28,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..llm import ModelRouter
+from ..memory import ParsedCVCache
 from ..models import CVEvidence, JobDescription, ParsedCV, RoleRequirement
 from ..observability import TraceCollector, traced_tool_call
 from ..validation import generate_validated
@@ -272,6 +273,7 @@ def parse_cv(
     router: ModelRouter,
     collector: TraceCollector | None = None,
     max_attempts: int = 3,
+    cache: ParsedCVCache | None = None,
 ) -> ParsedCV:
     """Parse a CV into a validated `ParsedCV`, keeping the candidate's wording.
 
@@ -279,8 +281,21 @@ def parse_cv(
     carried forward: unverbatim evidence would silently become the reference
     that Week 7's no-fabrication check trusts. Dropped lines are recorded in
     the trace so the loss is visible, not silent.
+
+    `cache`, like `ResearchAgent`'s `cache`, is an optional addition on top
+    of the base behaviour - omitting it (the default) reproduces the exact
+    behaviour this function had before caching existed: every call parses
+    fresh, nothing is ever stored or read back. A baseline CV is re-sent to
+    this same light-tier extraction, unchanged, on every single analysis a
+    user runs against it - the same repeated-work shape `CompanyResearchCache`
+    already exists to avoid, just on the CV side of a run instead of the
+    company side.
     """
     text = load_document_text(source)
+    if cache is not None:
+        cached = cache.get(text)
+        if cached is not None:
+            return cached
     draft = _extract(
         "parse_cv",
         CVExtraction,
@@ -306,7 +321,7 @@ def parse_cv(
         ) as outcome:
             outcome["result"] = "; ".join(item.text for item in dropped)
 
-    return ParsedCV(
+    parsed = ParsedCV(
         candidate_name=draft.candidate_name,
         raw_text=text,
         evidence=[
@@ -315,6 +330,9 @@ def parse_cv(
         ],
         skills=list(draft.skills),
     )
+    if cache is not None:
+        cache.set(text, parsed)
+    return parsed
 
 
 # --- Tool definitions --------------------------------------------------------
@@ -332,13 +350,16 @@ _SOURCE_SCHEMA = {
 
 
 def build_parsing_tools(
-    router: ModelRouter, collector: TraceCollector | None = None
+    router: ModelRouter,
+    collector: TraceCollector | None = None,
+    cv_cache: ParsedCVCache | None = None,
 ) -> list[Tool]:
     """The parsing tools, bound to a router and trace collector.
 
     A factory rather than module-level constants because a tool needs a router
     to exist, and each run may want its own collector - the same reason
-    ToolRegistry is an instance.
+    ToolRegistry is an instance. `cv_cache` defaults to None, reproducing the
+    exact behaviour this factory had before caching existed.
     """
     return [
         Tool(
@@ -356,6 +377,6 @@ def build_parsing_tools(
                 "Extract the candidate's skills and verbatim evidence lines from a CV."
             ),
             input_schema=_SOURCE_SCHEMA,
-            run=lambda source: parse_cv(source, router, collector),
+            run=lambda source: parse_cv(source, router, collector, cache=cv_cache),
         ),
     ]

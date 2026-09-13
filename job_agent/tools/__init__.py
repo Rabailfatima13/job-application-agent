@@ -55,7 +55,10 @@ from .web_search import (  # noqa: E402
 
 
 def build_default_registry(
-    router, collector=None, search_client: WebSearchClient | None = None
+    router,
+    collector=None,
+    search_client: WebSearchClient | None = None,
+    cv_cache=None,
 ) -> ToolRegistry:
     """Every tool the system currently has, ready for an agent.
 
@@ -65,8 +68,9 @@ def build_default_registry(
 
     `web_search` appears only when a search client is supplied, so a run
     without search credentials still gets a working parsing registry.
+    `cv_cache` defaults to None, same reasoning.
     """
-    tools = build_parsing_tools(router, collector)
+    tools = build_parsing_tools(router, collector, cv_cache=cv_cache)
     if search_client is not None:
         tools.append(build_web_search_tool(search_client))
     return ToolRegistry(tools)

@@ -88,16 +88,26 @@ def _tool_specs_openai(tools) -> list[dict]:
 # max_tokens budget as the actual answer, and can silently exhaust it on
 # reasoning alone - a live CVExtraction run returned an empty completion this
 # way. Qwen's family documents reasoning_effort="none" as disabling reasoning
-# entirely; gpt-oss (Groq's other reasoning family) only supports
-# low/medium/high, never "none", so this stays a name-scoped addition rather
-# than a value every openai_compatible model is assumed to accept - an
-# unrecognised field could be rejected outright by a stricter server.
+# entirely; gpt-oss (Ollama Cloud's other reasoning family, also used for the
+# HEAVY tier) only supports low/medium/high, never "none" - a live scoring
+# run measured its hidden reasoning alone consuming 60-70% of
+# SCORING_MAX_TOKENS with no override at all, occasionally enough to truncate
+# the JSON answer mid-string. "low" is the lowest value it actually accepts;
+# measured against the same real request, it cut reasoning's share by
+# roughly 40% and left every response valid. This stays a name-scoped
+# addition rather than a value every openai_compatible model is assumed to
+# accept - an unrecognised field could be rejected outright by a stricter
+# server.
 _REASONING_EFFORT_NONE_MODELS = ("qwen",)
+_REASONING_EFFORT_LOW_MODELS = ("gpt-oss",)
 
 
 def _reasoning_kwargs(model: str) -> dict:
-    if any(name in model.lower() for name in _REASONING_EFFORT_NONE_MODELS):
+    lowered = model.lower()
+    if any(name in lowered for name in _REASONING_EFFORT_NONE_MODELS):
         return {"reasoning_effort": "none"}
+    if any(name in lowered for name in _REASONING_EFFORT_LOW_MODELS):
+        return {"reasoning_effort": "low"}
     return {}
 
 

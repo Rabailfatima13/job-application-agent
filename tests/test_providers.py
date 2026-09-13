@@ -189,11 +189,34 @@ def test_qwen_requests_disable_reasoning():
     assert calls[0]["response_format"] == {"type": "json_object"}
 
 
-def test_non_qwen_models_never_receive_reasoning_effort():
+def test_gpt_oss_requests_use_low_reasoning_effort():
+    """A second live failure, this time on the HEAVY tier: a scoring run
+    against `gpt-oss:120b-cloud` measured its hidden reasoning alone
+    consuming 60-70% of SCORING_MAX_TOKENS with no override, occasionally
+    enough to truncate the JSON answer mid-string. Unlike Qwen, gpt-oss never
+    documents "none" - only low/medium/high - so this is the lowest value it
+    actually accepts; measured against the same real request, it cut
+    reasoning's share by roughly 40% and left every response valid."""
+    for model in ("gpt-oss:120b-cloud", "openai/gpt-oss-20b"):
+        client, calls = stub_client(
+            ModelConfig(
+                provider="openai_compatible",
+                model=model,
+                api_key="k",
+                base_url="https://example.invalid/v1",
+            )
+        )
+
+        client.complete([{"role": "user", "content": "hi"}], system="s")
+
+        assert calls[0]["reasoning_effort"] == "low"
+
+
+def test_non_reasoning_models_never_receive_reasoning_effort():
     """A model that never documented this parameter must see an unchanged
     request - an unrecognised field could be rejected outright by a stricter
-    OpenAI-compatible server (Ollama, OpenRouter, gpt-oss on Groq)."""
-    for model in ("gemini-3.6-flash", "llama-3.3-70b-versatile", "openai/gpt-oss-20b"):
+    OpenAI-compatible server (Ollama, OpenRouter)."""
+    for model in ("gemini-3.6-flash", "llama-3.3-70b-versatile"):
         client, calls = stub_client(
             ModelConfig(
                 provider="openai_compatible",

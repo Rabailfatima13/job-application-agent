@@ -792,6 +792,193 @@ def test_a_mixed_sentence_naming_the_company_is_still_checked_strictly(cv):
     ).passed
 
 
+# --- Regression: two more false rejections from a real live run -------------
+#
+# A live run against a genuinely well-matched job description ("AI/ML
+# Engineer" against a CV whose strongest project is a RAG system) still
+# scored every requirement as a match yet produced no tailored CV or cover
+# letter: every draft attempt was rejected, and the trace showed the same
+# shape of bug as the Nexora Analytics run above - a real claim, phrased
+# differently from the CV's own wording, treated as a fabrication.
+
+
+def test_a_spelled_out_acronym_supports_the_cvs_own_short_form():
+    # Fix 3: "RAG" on the CV, "Retrieval-Augmented Generation" in the draft -
+    # the exact live failure ("the CV never mentions Retrieval, Augmented,
+    # Generation"). The model's own output used a Unicode non-breaking hyphen
+    # (U+2011) rather than a plain "-", which is exactly the case this fix
+    # has to survive, not a plain ASCII rewrite of the same claim.
+    evidence = (
+        "Built a Quranic RAG Question-Answering system in Python using "
+        "LangChain and ChromaDB."
+    )
+    cv = ParsedCV(
+        candidate_name="Rabail Fatima",
+        raw_text=evidence,
+        evidence=[CVEvidence(text=evidence, section="Projects")],
+    )
+    claim = (
+        "Developed a Quranic Retrieval‑Augmented Generation system "
+        "using LangChain and ChromaDB."
+    )
+
+    result = check(claim, cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_an_invented_acronym_expansion_is_still_rejected():
+    # The acronym rewrite must only fire when the acronym is real - i.e.
+    # actually on the CV - so a claim cannot manufacture support by writing
+    # the full form of a technology that was never mentioned in any form.
+    cv = ParsedCV(
+        candidate_name="X",
+        raw_text="Built a website.",
+        evidence=[CVEvidence(text="Built a website.")],
+    )
+
+    result = check("Built a Retrieval-Augmented Generation system.", cv)
+
+    assert not result.passed
+    assert "Retrieval" in result.issues[0].reason
+
+
+def test_restful_supports_the_cvs_own_rest_phrasing():
+    # Fix 4: "REST APIs" on the CV, "RESTful APIs" in the draft - the same
+    # claim, the adjective form instead of the noun.
+    evidence = "Built REST APIs with Node.js and bcrypt authentication."
+    cv = ParsedCV(
+        candidate_name="Rabail Fatima",
+        raw_text=evidence,
+        evidence=[CVEvidence(text=evidence, section="Projects")],
+    )
+    claim = (
+        "Designed and implemented RESTful APIs using Node.js with bcrypt "
+        "authentication."
+    )
+
+    result = check(claim, cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_restful_is_still_rejected_when_the_cv_never_mentions_rest():
+    cv = ParsedCV(
+        candidate_name="X",
+        raw_text="Built a website.",
+        evidence=[CVEvidence(text="Built a website.")],
+    )
+
+    result = check("Designed RESTful APIs.", cv)
+
+    assert not result.passed
+    assert "RESTful" in result.issues[0].reason
+
+
+# --- Regression: naming the employer inside a candidate-intent sentence -----
+#
+# A live cover-letter run against a genuinely well-matched job ("AI/ML
+# Engineer" at "Lumen Analytics Group", every requirement judged a match) was
+# still rejected: "...to apply my strong Python skills and analytical
+# background to Lumen's AI initiatives." failed because "Lumen" is not on the
+# CV - even though naming the company you are writing to is not a claim of
+# experience with them.
+
+
+def _lumen_check(claim: str, cv: ParsedCV) -> GroundingResult:
+    return check_grounding(
+        [claim],
+        cv,
+        context_terms=("Lumen Analytics Group", "AI/ML Engineer"),
+        company_context=(
+            "Lumen Analytics Group is a data-driven consulting firm that "
+            "partners with Fortune 500 companies."
+        ),
+        company_name="Lumen Analytics Group",
+    )
+
+
+def test_naming_the_employer_in_a_candidate_sentence_is_not_a_fabrication():
+    # Fix 5: the exact live failure.
+    evidence = "Built a Quranic RAG system in Python using LangChain and ChromaDB."
+    cv = ParsedCV(
+        candidate_name="Rabail Fatima",
+        raw_text=evidence,
+        evidence=[CVEvidence(text=evidence, section="Projects")],
+    )
+    claim = (
+        "While I am still developing expertise in large-language-model "
+        "applications, I am eager to apply my strong Python skills and "
+        "analytical background to Lumen's AI initiatives."
+    )
+
+    result = _lumen_check(claim, cv)
+
+    assert result.passed, result.issues[0].reason if result.issues else ""
+
+
+def test_a_genuine_company_context_fact_in_the_same_sentence_shape_still_fails(
+    data_science_cv,
+):
+    # The employer's own name is a safe naming allowance; a company-context
+    # *fact* borrowed into the same candidate-framed sentence is not the same
+    # thing and must still fail - "Fortune 500" is true of Lumen's clients,
+    # not of the candidate, and is not the company's own name either.
+    claim = (
+        "Your reputation as a data-driven consulting firm serving Fortune "
+        "500 partners aligns with my ambition to apply data science skills "
+        "to impactful, real-world problems."
+    )
+
+    result = _lumen_check(claim, data_science_cv)
+
+    assert not result.passed
+    assert "Fortune" in result.issues[0].reason
+
+
+def test_the_advertised_role_still_cannot_license_a_skill_via_a_candidate_claim():
+    # The exact danger the design comment warns about, still blocked: a role
+    # advertised as "Kubernetes Engineer" must not make "I have Kubernetes
+    # experience" supportable just because "Kubernetes" is a nameable word
+    # for statements about the employer/role.
+    cv = ParsedCV(
+        candidate_name="X",
+        raw_text="Built a website.",
+        evidence=[CVEvidence(text="Built a website.")],
+    )
+
+    result = check_grounding(
+        ["I have Kubernetes experience."],
+        cv,
+        context_terms=("Acme Corp", "Kubernetes Engineer"),
+        company_name="Acme Corp",
+    )
+
+    assert not result.passed
+    assert "Kubernetes" in result.issues[0].reason
+
+
+def test_naming_the_employer_still_requires_the_real_employer_name():
+    # `company_only` must be built from the real `company_name`, not from
+    # `context_terms` in general - a candidate sentence naming some other
+    # party still gets no naming allowance for it.
+    cv = ParsedCV(
+        candidate_name="X",
+        raw_text="Built a website.",
+        evidence=[CVEvidence(text="Built a website.")],
+    )
+
+    result = check_grounding(
+        ["I am excited to bring my skills to Initech."],
+        cv,
+        context_terms=("Acme Corp", "Kubernetes Engineer"),
+        company_name="Acme Corp",
+    )
+
+    assert not result.passed
+    assert "Initech" in result.issues[0].reason
+
+
 # --- Offline replay: the exact captured trace from the live run --------------
 
 
